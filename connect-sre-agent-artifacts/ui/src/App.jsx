@@ -4,6 +4,7 @@ import Sidebar from './components/Sidebar';
 import Header from './components/Header';
 import Home from './pages/Home';
 import Incidents from './pages/Incidents';
+import Agents from './pages/Agents';
 import Monitoring from './pages/Monitoring';
 import Topology from './pages/Topology';
 import Approvals from './pages/Approvals';
@@ -20,6 +21,7 @@ function App() {
           <Routes>
             <Route path="/" element={<Home />} />
             <Route path="/incidents" element={<Incidents />} />
+            <Route path="/agents" element={<Agents />} />
             <Route path="/monitoring" element={<Monitoring />} />
             <Route path="/topology" element={<Topology />} />
             <Route path="/approvals" element={<Approvals />} />

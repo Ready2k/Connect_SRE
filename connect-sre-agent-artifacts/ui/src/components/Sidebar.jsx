@@ -2,10 +2,11 @@ import { NavLink } from 'react-router-dom';
 import { 
   Home, 
   AlertTriangle, 
+  Bot,
   Activity, 
   Network, 
   CheckCircle, 
-  Settings, 
+  Settings,
   FileText 
 } from 'lucide-react';
 
@@ -13,6 +14,7 @@ const Sidebar = () => {
   const navItems = [
     { icon: <Home size={20} />, label: 'Home', path: '/' },
     { icon: <AlertTriangle size={20} />, label: 'Incidents', path: '/incidents' },
+    { icon: <Bot size={20} />, label: 'Agents', path: '/agents' },
     { icon: <Activity size={20} />, label: 'Monitoring', path: '/monitoring' },
     { icon: <Network size={20} />, label: 'Topology', path: '/topology' },
     { icon: <CheckCircle size={20} />, label: 'Approvals', path: '/approvals' },
