@@ -20,6 +20,11 @@
   --border-highlight: rgba(255, 255, 255, 0.2);
 }
 
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50%       { opacity: 0.35; }
+}
+
 body {
   margin: 0;
   padding: 0;

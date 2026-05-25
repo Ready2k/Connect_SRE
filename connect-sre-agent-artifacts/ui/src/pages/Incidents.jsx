@@ -1,7 +1,102 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAppContext } from '../context/AppContext';
 import { Clock, Activity, ExternalLink } from 'lucide-react';
+
+const AGENT_COLOR = {
+  SUPERVISOR: 'var(--accent-cyan)', ADK: '#c084fc',
+  FLOW: '#4a9eff', MODULE: '#a855f7', QUEUE: '#f97316',
+  LEXA: '#eab308', AIA: '#22c55e', CHANGE: '#ec4899',
+  IMPACT: '#ef4444', RUNBOOK: '#14b8a6', RISK: '#f59e0b', VERIFY: '#84cc16',
+};
+
+function AgentActivityPanel({ status, createdAt, steps, onViewLogs }) {
+  const isLive = status === 'Investigating';
+
+  // Agents that have been dispatched but haven't returned yet
+  const dispatched = new Set();
+  const returned = new Set();
+  let lastStep = null;
+  for (const s of steps) {
+    if (s.type === 'specialist_call' || s.type === 'tool_call') dispatched.add(s.agent);
+    if (s.type === 'specialist_result' || s.type === 'tool_result') returned.add(s.agent);
+    lastStep = s;
+  }
+  const activeAgents = [...dispatched].filter(a => !returned.has(a));
+
+  const statusColor =
+    status === 'Investigating' ? 'var(--status-warn)' :
+    status === 'Resolved' ? 'var(--status-ok)' :
+    status?.startsWith('Failed') ? 'var(--status-critical)' :
+    'var(--text-secondary)';
+
+  return (
+    <div style={{ marginTop: '1.5rem', background: 'rgba(255,255,255,0.03)', padding: '1rem', borderRadius: '8px', border: '1px solid var(--border-glass)', fontSize: '0.85rem' }}>
+      {/* Status row */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', marginBottom: '0.6rem' }}>
+        {isLive ? (
+          <span style={{ width: 9, height: 9, borderRadius: '50%', background: 'var(--status-warn)', flexShrink: 0, animation: 'pulse 1.4s ease-in-out infinite' }} />
+        ) : (
+          <Activity size={14} color={statusColor} />
+        )}
+        <span style={{ color: 'var(--text-secondary)' }}>Agent Swarm</span>
+        <span style={{ fontWeight: 600, color: statusColor }}>{status || 'Idle'}</span>
+      </div>
+
+      {/* Detected at */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.75rem', color: 'var(--text-secondary)', fontSize: '0.8rem' }}>
+        <Clock size={13} />
+        <span>Detected {createdAt}</span>
+      </div>
+
+      {/* Active agent badges */}
+      {activeAgents.length > 0 && (
+        <div style={{ marginBottom: '0.75rem' }}>
+          <span style={{ fontSize: '0.72rem', color: 'var(--text-secondary)', letterSpacing: '0.05em', marginRight: '0.5rem' }}>ACTIVE</span>
+          <div style={{ display: 'inline-flex', flexWrap: 'wrap', gap: '0.35rem', marginTop: '0.3rem' }}>
+            {activeAgents.map(agent => (
+              <span key={agent} style={{
+                fontSize: '0.68rem', fontWeight: 700, padding: '0.15rem 0.5rem',
+                borderRadius: '3px', letterSpacing: '0.05em',
+                background: `${AGENT_COLOR[agent] || '#888'}22`,
+                color: AGENT_COLOR[agent] || '#888',
+                border: `1px solid ${AGENT_COLOR[agent] || '#888'}55`,
+                display: 'inline-flex', alignItems: 'center', gap: '0.3rem',
+              }}>
+                <span style={{ width: 6, height: 6, borderRadius: '50%', background: AGENT_COLOR[agent] || '#888', animation: 'pulse 1.4s ease-in-out infinite' }} />
+                {agent}
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Last step */}
+      {lastStep && (
+        <div style={{ marginBottom: '0.85rem', padding: '0.5rem 0.6rem', borderRadius: '5px', background: 'rgba(0,0,0,0.25)', fontSize: '0.78rem' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.2rem' }}>
+            <span style={{ color: AGENT_COLOR[lastStep.agent] || 'var(--text-secondary)', fontWeight: 600, fontSize: '0.7rem' }}>
+              {lastStep.agent}
+            </span>
+            <span style={{ color: 'var(--text-secondary)', fontFamily: 'monospace', fontSize: '0.7rem' }}>
+              {new Date(lastStep.ts).toLocaleTimeString()}
+            </span>
+          </div>
+          <div style={{ color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            {lastStep.message}
+          </div>
+        </div>
+      )}
+
+      <button
+        onClick={onViewLogs}
+        style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', padding: '0.45rem 0.9rem', background: 'rgba(0,212,255,0.08)', color: 'var(--accent-cyan)', border: '1px solid var(--accent-cyan)', borderRadius: '4px', cursor: 'pointer', fontSize: '0.82rem', fontWeight: 600 }}
+      >
+        <ExternalLink size={14} /> View Investigation Logs
+      </button>
+    </div>
+  );
+}
 
 const Incidents = () => {
   const { mode } = useAppContext();
@@ -13,6 +108,8 @@ const Incidents = () => {
   const [triggering, setTriggering] = useState(false);
   const [dismissing, setDismissing] = useState(false);
   const [clearingAll, setClearingAll] = useState(false);
+  const [steps, setSteps] = useState([]);
+  const stepsTimerRef = useRef(null);
 
   const ACTIVE_STATUSES = new Set(['Investigating', 'Open', 'Pending', 'Triggered', 'Escalated', 'Failed', 'Failed - Rate Limited']);
 
@@ -40,12 +137,43 @@ const Incidents = () => {
       });
   }, []);
 
-  // Poll approvals every 8s while any selected incident is actively being investigated
+  // Poll approvals every 5s while investigating
   useEffect(() => {
     if (!selected || !ACTIVE_STATUSES.has(selected.status)) return;
-    const timer = setInterval(fetchApprovals, 8000);
+    const timer = setInterval(fetchApprovals, 5000);
     return () => clearInterval(timer);
   }, [selected?.incidentId, selected?.status]);
+
+  // Poll investigation steps every 3s while investigating; auto-stop on terminal step
+  useEffect(() => {
+    if (stepsTimerRef.current) clearInterval(stepsTimerRef.current);
+    setSteps([]);
+    if (!selected) return;
+
+    const fetchSteps = () =>
+      fetch(`/api/incidents/${selected.incidentId}/steps?mode=${mode}`)
+        .then(r => r.json())
+        .then(data => {
+          setSteps(data);
+          const last = data[data.length - 1];
+          if (last?.type === 'complete' || last?.type === 'error') {
+            // Reflect terminal status in local state so the panel updates
+            const newStatus = last.type === 'complete' ? 'Resolved' : 'Failed';
+            setSelected(prev => prev ? { ...prev, status: newStatus } : prev);
+            setIncidents(prev => prev.map(i =>
+              i.incidentId === selected.incidentId ? { ...i, status: newStatus } : i
+            ));
+            clearInterval(stepsTimerRef.current);
+          }
+        })
+        .catch(() => {});
+
+    fetchSteps();
+    if (selected.status === 'Investigating') {
+      stepsTimerRef.current = setInterval(fetchSteps, 3000);
+    }
+    return () => clearInterval(stepsTimerRef.current);
+  }, [selected?.incidentId]);
 
   const handleAction = (approvalId, status) => {
     fetch(`/api/approvals/${approvalId}/action?mode=${mode}`, {
@@ -234,20 +362,13 @@ const Incidents = () => {
                 )}
               </div>
 
-              <div style={{ marginTop: '1.5rem', background: 'rgba(255,255,255,0.03)', padding: '1rem', borderRadius: '8px', border: '1px solid var(--border-glass)', fontSize: '0.85rem' }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.75rem', color: 'var(--text-primary)' }}>
-                  <Activity size={16} /> <strong>Agent Swarm</strong>: {selected.status || "Investigating..."}
-                </div>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '1rem', color: 'var(--text-primary)' }}>
-                  <Clock size={16} /> <strong>Detected At</strong>: {selected.createdAt}
-                </div>
-                <button
-                  onClick={() => navigate(`/logs?incidentId=${selected.incidentId}`)}
-                  style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', padding: '0.45rem 0.9rem', background: 'rgba(0,212,255,0.08)', color: 'var(--accent-cyan)', border: '1px solid var(--accent-cyan)', borderRadius: '4px', cursor: 'pointer', fontSize: '0.82rem', fontWeight: 600 }}
-                >
-                  <ExternalLink size={14} /> View Investigation Logs
-                </button>
-              </div>
+              {/* Live agent swarm activity panel */}
+              <AgentActivityPanel
+                status={selected.status}
+                createdAt={selected.createdAt}
+                steps={steps}
+                onViewLogs={() => navigate(`/logs?incidentId=${selected.incidentId}`)}
+              />
             </div>
 
             {/* Action Recommendation */}
