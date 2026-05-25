@@ -6,6 +6,7 @@ import { useAppContext } from '../context/AppContext';
 // ── Agent colour palette ─────────────────────────────────────────────────────
 const AGENT_COLOR = {
   SUPERVISOR: 'var(--accent-cyan)',
+  ADK:     '#c084fc',   // Gemini tool calls — soft purple
   FLOW:    '#4a9eff',
   MODULE:  '#a855f7',
   QUEUE:   '#f97316',
@@ -22,6 +23,8 @@ const TYPE_ICON = {
   start:            '▶',
   specialist_call:  '→',
   specialist_result:'✓',
+  tool_call:        '⚡',  // Gemini direct tool invocation
+  tool_result:      '↩',  // Gemini tool return
   complete:         '✓✓',
   error:            '✗',
 };
@@ -30,6 +33,8 @@ const TYPE_LABEL = {
   start:            'STARTED',
   specialist_call:  'DISPATCH',
   specialist_result:'RESULT',
+  tool_call:        'TOOL CALL',
+  tool_result:      'TOOL RESULT',
   complete:         'COMPLETE',
   error:            'ERROR',
 };

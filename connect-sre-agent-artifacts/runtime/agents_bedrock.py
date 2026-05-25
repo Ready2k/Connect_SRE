@@ -73,6 +73,7 @@ def build_strands_supervisor(model, trace_fn=None):
         model: A fully configured Strands model instance (e.g. BedrockModel).
         trace_fn: Optional callable(step: dict) invoked at each specialist
                   dispatch and result for live trace streaming.
+                  On the Gemini path, tool-level wrapping is done in agent.py.
     Returns:
         A Strands Agent acting as the multi-agent supervisor.
     """
