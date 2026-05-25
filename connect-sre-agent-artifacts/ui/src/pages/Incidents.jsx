@@ -10,6 +10,7 @@ const Incidents = () => {
   const [selected, setSelected] = useState(null);
   const [loading, setLoading] = useState(true);
   const [triggering, setTriggering] = useState(false);
+  const [dismissing, setDismissing] = useState(false);
 
   const ACTIVE_STATUSES = new Set(['Investigating', 'Open', 'Pending', 'Triggered', 'Escalated', 'Failed', 'Failed - Rate Limited']);
 
@@ -85,6 +86,25 @@ const Incidents = () => {
     });
   };
 
+  const handleDismiss = (incidentId) => {
+    setDismissing(true);
+    fetch(`/api/incidents/${incidentId}/status?mode=${mode}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ status: 'Dismissed' })
+    })
+    .then(res => res.json())
+    .then(() => {
+      setIncidents(prev => prev.filter(inc => inc.incidentId !== incidentId));
+      setSelected(null);
+      setDismissing(false);
+    })
+    .catch(err => {
+      alert("Network error: " + err);
+      setDismissing(false);
+    });
+  };
+
   const fetchTraces = (incidentId) => {
     fetch(`/api/incidents/${incidentId}/traces?mode=${mode}`)
       .then(res => res.json())
@@ -157,12 +177,20 @@ const Incidents = () => {
                 <span style={{ color: 'var(--status-critical)' }}>Severity: {selected.severity}</span>
               </div>
             </div>
-            <button 
-              onClick={() => handleTriggerAgent(selected.incidentId)}
-              disabled={triggering}
-              style={{ padding: '0.5rem 1rem', background: 'var(--accent-blue)', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 600 }}>
-              {triggering ? "Triggering..." : "Trigger Agent Triage"}
-            </button>
+            <div style={{ display: 'flex', gap: '0.5rem' }}>
+              <button
+                onClick={() => handleDismiss(selected.incidentId)}
+                disabled={dismissing}
+                style={{ padding: '0.5rem 1rem', background: 'transparent', color: 'var(--text-secondary)', border: '1px solid var(--border-glass)', borderRadius: '4px', cursor: 'pointer', fontWeight: 600 }}>
+                {dismissing ? "Dismissing..." : "Dismiss"}
+              </button>
+              <button
+                onClick={() => handleTriggerAgent(selected.incidentId)}
+                disabled={triggering}
+                style={{ padding: '0.5rem 1rem', background: 'var(--accent-blue)', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 600 }}>
+                {triggering ? "Triggering..." : "Trigger Agent Triage"}
+              </button>
+            </div>
           </div>
 
           <div style={{ display: 'flex', gap: '1.5rem', flex: 1, minHeight: 0 }}>

@@ -276,6 +276,26 @@ async def trigger_agent_for_incident(incident_id: str, background_tasks: Backgro
         logger.error(f"Failed to trigger agent: {e}")
         return {"status": "error", "message": str(e)}
 
+@app.patch("/api/incidents/{incident_id}/status")
+async def update_incident_status(incident_id: str, body: dict, mode: str = Query("demo")):
+    if mode == "demo":
+        return {"status": "success"}
+    allowed = {"Failed", "Dismissed", "Resolved"}
+    new_status = body.get("status")
+    if new_status not in allowed:
+        raise HTTPException(status_code=400, detail=f"status must be one of {allowed}")
+    try:
+        dynamodb.Table(INCIDENT_TABLE).update_item(
+            Key={'incidentId': incident_id},
+            UpdateExpression="SET #s = :s",
+            ExpressionAttributeNames={'#s': 'status'},
+            ExpressionAttributeValues={':s': new_status}
+        )
+        return {"status": "success"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @app.get("/api/incidents/{incident_id}/traces")
 async def get_incident_traces(incident_id: str, mode: str = Query("demo")):
     if mode == "demo":
