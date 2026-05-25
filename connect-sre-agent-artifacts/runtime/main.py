@@ -307,13 +307,20 @@ async def trigger_agent_for_incident(incident_id: str, background_tasks: Backgro
             ExpressionAttributeValues={':s': 'Investigating'}
         )
 
+        # Merge top-level resource IDs into metadata so the agent prompt carries them
+        merged_metadata = dict(incident.get("metadata") or {})
+        if incident.get("connectResourceId"):
+            merged_metadata["connectResourceId"] = incident["connectResourceId"]
+        if incident.get("instanceId"):
+            merged_metadata["connectInstanceId"] = incident["instanceId"]
+
         payload = IncidentPayload(
             incidentId=incident_id,
             source=incident.get("source", "manual-trigger"),
             severity=incident.get("severity", "SEV3"),
             title=incident.get("title", ""),
-            details=incident.get("description", ""),
-            metadata=incident.get("metadata", {}),
+            details=incident.get("details", incident.get("description", "")),
+            metadata=merged_metadata,
         )
         background_tasks.add_task(investigate_incident_background, payload)
         return {"status": "success", "message": "Agent investigation started."}
