@@ -8,15 +8,16 @@ MODEL_PROVIDER = os.environ.get("MODEL_PROVIDER", "gemini").lower()
 BEDROCK_MODEL_ID = os.environ.get("BEDROCK_MODEL_ID", "us.anthropic.claude-sonnet-4-6")
 
 
-def get_supervisor_agent(model_id: str = None):
+def get_supervisor_agent(model_id: str = None, trace_fn=None):
     """Returns an async context manager that yields an agent with a .chat() method.
 
     Args:
         model_id: Optional model ID override. For Bedrock, replaces BEDROCK_MODEL_ID.
                   Allows runtime config changes to take effect without a restart.
+        trace_fn: Optional callable(step: dict) for live trace streaming (Bedrock only).
     """
     if MODEL_PROVIDER == "bedrock":
-        return _BedrockSupervisor(model_id=model_id)
+        return _BedrockSupervisor(model_id=model_id, trace_fn=trace_fn)
     return _get_gemini_agent()
 
 
@@ -64,8 +65,9 @@ class _BedrockSupervisor:
     chat() dispatches to a thread-pool executor to avoid blocking the event loop.
     """
 
-    def __init__(self, model_id: str = None):
+    def __init__(self, model_id: str = None, trace_fn=None):
         self._model_id = model_id or BEDROCK_MODEL_ID
+        self._trace_fn = trace_fn
 
     async def __aenter__(self):
         from strands.models.bedrock import BedrockModel
@@ -73,7 +75,7 @@ class _BedrockSupervisor:
 
         region = os.environ.get("AWS_REGION", os.environ.get("AWS_DEFAULT_REGION", "us-west-2"))
         model = BedrockModel(model_id=self._model_id, region_name=region)
-        self._agent = build_strands_supervisor(model)
+        self._agent = build_strands_supervisor(model, trace_fn=self._trace_fn)
         logger.info("Bedrock multi-agent supervisor ready: %s in %s", self._model_id, region)
         return self
 

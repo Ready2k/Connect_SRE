@@ -38,6 +38,21 @@ TRACE_TABLE_NAME = os.environ.get("AGENT_RUNS_TABLE_NAME", "dev-connect-sre-agen
 
 s3_client = boto3.client("s3", region_name=os.environ.get("AWS_REGION", os.environ.get("AWS_DEFAULT_REGION", "us-west-2")))
 
+# In-memory investigation step store: incidentId -> list of step dicts.
+# Steps are appended in real-time during investigation so the UI can poll them live.
+# Only the most recent _STEP_STORE_MAX investigations are retained.
+_STEP_STORE_MAX = 50
+_step_store: dict = {}
+
+def _add_step(incident_id: str, step: dict):
+    steps = _step_store.setdefault(incident_id, [])
+    step["seq"] = len(steps) + 1
+    steps.append(step)
+    # Trim oldest investigations to cap memory usage
+    if len(_step_store) > _STEP_STORE_MAX:
+        oldest = next(iter(_step_store))
+        del _step_store[oldest]
+
 # Lazily resolved AWS account ID (used in IAM ARN construction)
 _aws_account_id: Optional[str] = None
 
@@ -98,8 +113,22 @@ async def investigate_incident_background(payload: IncidentPayload):
     run_id = f"run-{uuid.uuid4().hex[:8]}"
     started_at = datetime.utcnow().isoformat() + "Z"
     start_time = time.time()
+
+    # Initialise step store for this incident and add the opening event
+    _step_store[payload.incidentId] = []
+    _add_step(payload.incidentId, {
+        "ts": started_at,
+        "type": "start",
+        "agent": "SUPERVISOR",
+        "message": f"Investigation started — {payload.title}",
+        "detail": f"Incident: {payload.incidentId} | Severity: {payload.severity} | Source: {payload.source}",
+    })
+
+    def trace_fn(step: dict):
+        _add_step(payload.incidentId, step)
+
     try:
-        async with get_supervisor_agent(_model_config.get("primaryModel")) as supervisor:
+        async with get_supervisor_agent(_model_config.get("primaryModel"), trace_fn=trace_fn) as supervisor:
             prompt = (
                 f"A new critical incident has been detected in Amazon Connect.\n"
                 f"Incident ID: {payload.incidentId}\n"
@@ -114,6 +143,13 @@ async def investigate_incident_background(payload: IncidentPayload):
             final_report = await response.text()
             latency_ms = int((time.time() - start_time) * 1000)
             logger.info(f"Investigation Complete for {payload.incidentId}. Final Report:\n{final_report}")
+            _add_step(payload.incidentId, {
+                "ts": datetime.utcnow().isoformat() + "Z",
+                "type": "complete",
+                "agent": "SUPERVISOR",
+                "message": "Investigation complete",
+                "detail": final_report[:4000],
+            })
             _write_trace(run_id, payload.incidentId, started_at, latency_ms, "success", final_report[:2000])
     except Exception as e:
         latency_ms = int((time.time() - start_time) * 1000)
@@ -121,6 +157,13 @@ async def investigate_incident_background(payload: IncidentPayload):
         is_quota = "429" in str(e) or "quota" in str(e).lower() or "RESOURCE_EXHAUSTED" in str(e)
         failure_status = "Failed - Rate Limited" if is_quota else "Failed"
         error_summary = "Gemini API free-tier quota exhausted. Upgrade API key or switch to Bedrock." if is_quota else str(e)[:500]
+        _add_step(payload.incidentId, {
+            "ts": datetime.utcnow().isoformat() + "Z",
+            "type": "error",
+            "agent": "SUPERVISOR",
+            "message": f"Investigation failed: {error_summary[:120]}",
+            "detail": str(e),
+        })
         _write_trace(run_id, payload.incidentId, started_at, latency_ms, "error", error_summary)
         try:
             dynamodb.Table(INCIDENT_TABLE).update_item(
@@ -348,6 +391,70 @@ async def get_incident_traces(incident_id: str, mode: str = Query("demo")):
     except Exception as e:
         logger.error(f"Failed to fetch traces: {e}")
         return []
+
+_DEMO_STEPS = [
+    {"seq": 1, "ts": "2026-05-25T14:31:00Z", "type": "start", "agent": "SUPERVISOR",
+     "message": "Investigation started — Customer Sentiment Drop",
+     "detail": "Incident: INC-DEMO-002 | Severity: SEV2 | Source: Connect Contact Lens"},
+    {"seq": 2, "ts": "2026-05-25T14:31:01Z", "type": "specialist_call", "agent": "FLOW",
+     "message": "Investigate contact flow health for Billing queue flows",
+     "detail": "Check all flows feeding the Billing queue for fatal errors or broken blocks in the last 60 minutes."},
+    {"seq": 3, "ts": "2026-05-25T14:31:01Z", "type": "specialist_call", "agent": "CHANGE",
+     "message": "Scan for recent configuration mutations on Billing flow resources",
+     "detail": "Look for recent mutations on flows and Lex bots associated with the Billing_Queue."},
+    {"seq": 4, "ts": "2026-05-25T14:31:01Z", "type": "specialist_call", "agent": "LEXA",
+     "message": "Check Lex bot health for Billing_Bot integration",
+     "detail": "Investigate Lex bot intent recognition errors and alias references in Billing flows."},
+    {"seq": 5, "ts": "2026-05-25T14:31:04Z", "type": "specialist_result", "agent": "CHANGE",
+     "message": "Found 1 mutation: Billing_Bot alias updated 18 hours ago (v3 → v4)",
+     "detail": "Resource: lex:bot:billing-bot\nMutation: UpdateBotAlias — alias PROD changed from v3 to v4\nTimestamp: 2026-05-24T20:15:00Z\nOperator: ops-team\n\nThis change correlates with the start of the sentiment drop."},
+    {"seq": 6, "ts": "2026-05-25T14:31:06Z", "type": "specialist_result", "agent": "LEXA",
+     "message": "Billing_Bot v4 fallback rate 34% — regression in payment intent handling",
+     "detail": "Lex bot 'Billing_Bot' alias PROD → v4 (deployed 18h ago)\nFallback intent rate: 34% (baseline: 8%)\nMost-failed utterance pattern: payment-related queries\n\nConclusion: v4 regression causing widespread misrouting."},
+    {"seq": 7, "ts": "2026-05-25T14:31:08Z", "type": "specialist_result", "agent": "FLOW",
+     "message": "BillingFlow structurally healthy — 0 fatal errors. Sentiment drop is Lex-driven.",
+     "detail": "Flows checked: BillingFlow, BillingQueue_Transfer\nCONTACT_FLOW_FATAL_ERROR: 0\nCONTACT_FLOW_ERROR: 2 (minor, unrelated)\n\nFlow structure is healthy. Sentiment drop is upstream — customers frustrated by Lex misrouting."},
+    {"seq": 8, "ts": "2026-05-25T14:31:09Z", "type": "specialist_call", "agent": "RISK",
+     "message": "Validate blast radius of rolling back Billing_Bot to v3",
+     "detail": "Proposed: rollback Billing_Bot alias PROD from v4 → v3. Check policy compliance and blast radius."},
+    {"seq": 9, "ts": "2026-05-25T14:31:11Z", "type": "specialist_result", "agent": "RISK",
+     "message": "Rollback approved — blast radius 3.2%, within 20% policy limit",
+     "detail": "Blast radius: 1 flow, 2 phone numbers, ~3.2% of instance traffic\nPolicy checks:\n  Max Blast Radius 20%: 3.2% < 20% ✓\n  Out-of-hours policy: Not applicable (09:31 UTC) ✓\n  Lambda approval required: N/A ✓"},
+    {"seq": 10, "ts": "2026-05-25T14:31:12Z", "type": "complete", "agent": "SUPERVISOR",
+     "message": "Investigation complete — remediation ticket raised for human approval",
+     "detail": "Root cause: Lex bot alias regression (v3→v4) causing 34% fallback rate in payment queries.\nRemediation: Rollback Billing_Bot alias PROD to v3.\nApproval ticket: APP-3F2A1B4C — awaiting human sign-off."},
+]
+
+
+@app.get("/api/incidents/{incident_id}/steps")
+async def get_incident_steps(incident_id: str, mode: str = Query("demo")):
+    """Return live investigation steps from the in-memory step store.
+    Falls back to the DynamoDB trace record for completed historical investigations."""
+    if mode == "demo":
+        return _DEMO_STEPS
+    # Return live steps if available
+    if incident_id in _step_store and _step_store[incident_id]:
+        return _step_store[incident_id]
+    # Fall back: convert historical DynamoDB trace to a single step
+    try:
+        table = dynamodb.Table(TRACE_TABLE_NAME)
+        resp = table.scan(FilterExpression=boto3.dynamodb.conditions.Attr('incidentId').eq(incident_id))
+        items = sorted(resp.get('Items', []), key=lambda x: x.get('startedAt', ''))
+        if items:
+            trace = items[-1]
+            return [
+                {"seq": 1, "ts": trace.get("startedAt", ""), "type": "start", "agent": "SUPERVISOR",
+                 "message": f"Investigation run {trace.get('runId', '')}",
+                 "detail": f"Model: {trace.get('modelId', '')} | Latency: {trace.get('latencyMs', 0)}ms"},
+                {"seq": 2, "ts": trace.get("startedAt", ""), "type": "complete" if trace.get("status") == "success" else "error",
+                 "agent": "SUPERVISOR",
+                 "message": "Investigation complete" if trace.get("status") == "success" else "Investigation failed",
+                 "detail": trace.get("thoughtProcess", "")},
+            ]
+    except Exception as e:
+        logger.error(f"Failed to fetch historical steps: {e}")
+    return []
+
 
 @app.post("/api/traces")
 async def create_trace(request: Request):

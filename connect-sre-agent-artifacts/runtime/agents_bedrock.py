@@ -13,6 +13,7 @@ underlying Connect/DynamoDB tools directly.  Only the supervisor may call
 
 import logging
 import os
+from datetime import datetime, timezone
 
 from prompts import (
     SUPERVISOR_STRANDS_INSTRUCTION,
@@ -54,17 +55,38 @@ query_cloudwatch_flow_logs = _strands_tool(_query_cloudwatch_flow_logs)
 logger = logging.getLogger(__name__)
 
 
-def build_strands_supervisor(model):
+def _summarize(text: str, length: int = 160) -> str:
+    """Return a short plain-text headline from potentially markdown-heavy output."""
+    for line in text.split('\n'):
+        clean = line.strip().lstrip('#*->-| ')
+        if clean:
+            return clean[:length] + ('…' if len(clean) > length else '')
+    return text[:length]
+
+
+def build_strands_supervisor(model, trace_fn=None):
     """
     Instantiate all 10 specialist Strands agents, wrap each as a @tool, and
     return a configured supervisor Agent that delegates to them.
 
     Args:
         model: A fully configured Strands model instance (e.g. BedrockModel).
+        trace_fn: Optional callable(step: dict) invoked at each specialist
+                  dispatch and result for live trace streaming.
     Returns:
         A Strands Agent acting as the multi-agent supervisor.
     """
     from strands import Agent, tool
+
+    def _emit(event_type: str, agent: str, message: str, detail: str = ""):
+        if trace_fn:
+            trace_fn({
+                "ts": datetime.now(timezone.utc).isoformat(),
+                "type": event_type,
+                "agent": agent,
+                "message": message,
+                "detail": detail,
+            })
 
     # ------------------------------------------------------------------
     # 1. Specialist agent instances
@@ -147,7 +169,10 @@ def build_strands_supervisor(model):
             query: The investigation question or task for the specialist.
         """
         logger.info("[FLOW] delegating: %.120s", query)
-        return str(flow_agent(query))
+        _emit("specialist_call", "FLOW", query[:160], query)
+        result = str(flow_agent(query))
+        _emit("specialist_result", "FLOW", _summarize(result), result[:3000])
+        return result
 
     @tool
     def module_dependency_specialist(query: str) -> str:
@@ -159,7 +184,10 @@ def build_strands_supervisor(model):
             query: The investigation question or task for the specialist.
         """
         logger.info("[MODULE] delegating: %.120s", query)
-        return str(module_agent(query))
+        _emit("specialist_call", "MODULE", query[:160], query)
+        result = str(module_agent(query))
+        _emit("specialist_result", "MODULE", _summarize(result), result[:3000])
+        return result
 
     @tool
     def queue_routing_specialist(query: str) -> str:
@@ -171,7 +199,10 @@ def build_strands_supervisor(model):
             query: The investigation question or task for the specialist.
         """
         logger.info("[QUEUE] delegating: %.120s", query)
-        return str(queue_agent(query))
+        _emit("specialist_call", "QUEUE", query[:160], query)
+        result = str(queue_agent(query))
+        _emit("specialist_result", "QUEUE", _summarize(result), result[:3000])
+        return result
 
     @tool
     def lex_bot_specialist(query: str) -> str:
@@ -183,7 +214,10 @@ def build_strands_supervisor(model):
             query: The investigation question or task for the specialist.
         """
         logger.info("[LEXA] delegating: %.120s", query)
-        return str(lex_agent(query))
+        _emit("specialist_call", "LEXA", query[:160], query)
+        result = str(lex_agent(query))
+        _emit("specialist_result", "LEXA", _summarize(result), result[:3000])
+        return result
 
     @tool
     def ai_assist_specialist(query: str) -> str:
@@ -195,7 +229,10 @@ def build_strands_supervisor(model):
             query: The investigation question or task for the specialist.
         """
         logger.info("[AIA] delegating: %.120s", query)
-        return str(ai_assist_agent(query))
+        _emit("specialist_call", "AIA", query[:160], query)
+        result = str(ai_assist_agent(query))
+        _emit("specialist_result", "AIA", _summarize(result), result[:3000])
+        return result
 
     @tool
     def change_correlation_specialist(query: str) -> str:
@@ -208,7 +245,10 @@ def build_strands_supervisor(model):
                    the resource ID to investigate.
         """
         logger.info("[CHANGE] delegating: %.120s", query)
-        return str(change_agent(query))
+        _emit("specialist_call", "CHANGE", query[:160], query)
+        result = str(change_agent(query))
+        _emit("specialist_result", "CHANGE", _summarize(result), result[:3000])
+        return result
 
     @tool
     def customer_impact_specialist(query: str) -> str:
@@ -221,7 +261,10 @@ def build_strands_supervisor(model):
                    the node ID that has failed.
         """
         logger.info("[IMPACT] delegating: %.120s", query)
-        return str(impact_agent(query))
+        _emit("specialist_call", "IMPACT", query[:160], query)
+        result = str(impact_agent(query))
+        _emit("specialist_result", "IMPACT", _summarize(result), result[:3000])
+        return result
 
     @tool
     def runbook_specialist(query: str) -> str:
@@ -234,7 +277,10 @@ def build_strands_supervisor(model):
                    (e.g. 'lex_bot_failure', 'flow_fatal_error', 'queue_overflow').
         """
         logger.info("[RUNBOOK] delegating: %.120s", query)
-        return str(runbook_agent(query))
+        _emit("specialist_call", "RUNBOOK", query[:160], query)
+        result = str(runbook_agent(query))
+        _emit("specialist_result", "RUNBOOK", _summarize(result), result[:3000])
+        return result
 
     @tool
     def risk_policy_specialist(query: str) -> str:
@@ -247,7 +293,10 @@ def build_strands_supervisor(model):
                    node ID and action type.
         """
         logger.info("[RISK] delegating: %.120s", query)
-        return str(risk_agent(query))
+        _emit("specialist_call", "RISK", query[:160], query)
+        result = str(risk_agent(query))
+        _emit("specialist_result", "RISK", _summarize(result), result[:3000])
+        return result
 
     @tool
     def verification_specialist(query: str) -> str:
@@ -260,7 +309,10 @@ def build_strands_supervisor(model):
                    and the metric or log group to check.
         """
         logger.info("[VERIFY] delegating: %.120s", query)
-        return str(verify_agent(query))
+        _emit("specialist_call", "VERIFY", query[:160], query)
+        result = str(verify_agent(query))
+        _emit("specialist_result", "VERIFY", _summarize(result), result[:3000])
+        return result
 
     # ------------------------------------------------------------------
     # 3. Supervisor — sees all 10 specialist tools plus propose_remediation.

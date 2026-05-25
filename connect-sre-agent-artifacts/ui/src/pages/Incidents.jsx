@@ -1,12 +1,13 @@
 import { useState, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { useAppContext } from '../context/AppContext';
-import { Clock, Eye, Activity } from 'lucide-react';
+import { Clock, Activity, ExternalLink } from 'lucide-react';
 
 const Incidents = () => {
   const { mode } = useAppContext();
+  const navigate = useNavigate();
   const [incidents, setIncidents] = useState([]);
   const [approvals, setApprovals] = useState([]);
-  const [traces, setTraces] = useState([]);
   const [selected, setSelected] = useState(null);
   const [loading, setLoading] = useState(true);
   const [triggering, setTriggering] = useState(false);
@@ -76,10 +77,7 @@ const Incidents = () => {
       if (selected && selected.incidentId === incidentId) {
         setSelected({ ...selected, status: "Investigating" });
       }
-      setTimeout(() => {
-        setTriggering(false);
-        if (selected) fetchTraces(selected.incidentId);
-      }, 1000);
+      setTimeout(() => setTriggering(false), 1000);
     })
     .catch(err => {
       alert("Network error: " + err);
@@ -122,18 +120,6 @@ const Incidents = () => {
       });
   };
 
-  const fetchTraces = (incidentId) => {
-    fetch(`/api/incidents/${incidentId}/traces?mode=${mode}`)
-      .then(res => res.json())
-      .then(data => setTraces(data))
-      .catch(err => console.error("Failed to fetch traces", err));
-  };
-
-  useEffect(() => {
-    if (selected) {
-      fetchTraces(selected.incidentId);
-    }
-  }, [selected]);
 
   if (loading) return <div style={{ padding: '2rem' }}>Loading incidents from DynamoDB...</div>;
   if (incidents.length === 0) return (
@@ -248,58 +234,19 @@ const Incidents = () => {
                 )}
               </div>
 
-              <h3 style={{ fontSize: '1rem', marginTop: '1.5rem', marginBottom: '1rem', color: 'var(--accent-cyan)' }}>Agent Trace Store</h3>
-              {traces.length === 0 ? (
-                <div style={{ background: 'rgba(255,255,255,0.03)', padding: '1.5rem', borderRadius: '8px', border: '1px solid var(--border-glass)', textAlign: 'center' }}>
-                  <Activity size={24} color="var(--text-secondary)" style={{ marginBottom: '0.5rem' }} />
-                  <div style={{ color: 'var(--text-secondary)', fontSize: '0.9rem' }}>
-                    Agent reasoning traces will appear here once an investigation completes.
-                  </div>
-                </div>
-              ) : (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem', borderLeft: '2px solid var(--border-glass)', paddingLeft: '1rem', marginLeft: '0.5rem' }}>
-                  {traces.map((trace, idx) => (
-                    <div key={idx} style={{ position: 'relative' }}>
-                      {/* Timeline dot */}
-                      <div style={{ position: 'absolute', left: '-1.35rem', top: '0.5rem', width: '10px', height: '10px', borderRadius: '50%', background: 'var(--accent-cyan)' }}></div>
-                      
-                      <div style={{ background: 'rgba(255,255,255,0.03)', padding: '1rem', borderRadius: '8px', border: '1px solid var(--border-glass)' }}>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.5rem' }}>
-                          <span style={{ fontWeight: 600, color: 'var(--accent-blue)', fontSize: '0.9rem' }}>{trace.agentName}</span>
-                          <span style={{ color: 'var(--text-secondary)', fontSize: '0.75rem' }}>{new Date(trace.startedAt).toLocaleTimeString()}</span>
-                        </div>
-                        
-                        <div style={{ fontSize: '0.85rem', color: 'var(--text-primary)', marginBottom: '0.75rem', lineHeight: 1.4 }}>
-                          {trace.thoughtProcess}
-                        </div>
-                        
-                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem', fontSize: '0.75rem' }}>
-                          {trace.toolCalls && trace.toolCalls.map(tool => (
-                            <span key={tool} style={{ background: 'rgba(0,0,0,0.5)', padding: '0.2rem 0.5rem', borderRadius: '4px', border: '1px solid var(--border-glass)', color: 'var(--accent-cyan)' }}>
-                              ⚡ {tool}()
-                            </span>
-                          ))}
-                        </div>
-                        
-                        <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '1rem', paddingTop: '0.5rem', borderTop: '1px solid rgba(255,255,255,0.05)', fontSize: '0.75rem', color: 'var(--text-secondary)' }}>
-                          <span>Latency: {trace.latencyMs}ms</span>
-                          <span>Model: {trace.modelId}</span>
-                          <span>Cost: {trace.costEstimate}</span>
-                        </div>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
-
-              <h3 style={{ fontSize: '1rem', marginTop: '1.5rem', marginBottom: '1rem', color: 'var(--accent-cyan)' }}>Automated SRE Analysis</h3>
-              <div style={{ background: 'rgba(255,255,255,0.03)', padding: '1rem', borderRadius: '8px', border: '1px solid var(--border-glass)', fontSize: '0.85rem' }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem', color: 'var(--text-primary)' }}>
+              <div style={{ marginTop: '1.5rem', background: 'rgba(255,255,255,0.03)', padding: '1rem', borderRadius: '8px', border: '1px solid var(--border-glass)', fontSize: '0.85rem' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.75rem', color: 'var(--text-primary)' }}>
                   <Activity size={16} /> <strong>Agent Swarm</strong>: {selected.status || "Investigating..."}
                 </div>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', color: 'var(--text-primary)' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '1rem', color: 'var(--text-primary)' }}>
                   <Clock size={16} /> <strong>Detected At</strong>: {selected.createdAt}
                 </div>
+                <button
+                  onClick={() => navigate(`/logs?incidentId=${selected.incidentId}`)}
+                  style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', padding: '0.45rem 0.9rem', background: 'rgba(0,212,255,0.08)', color: 'var(--accent-cyan)', border: '1px solid var(--accent-cyan)', borderRadius: '4px', cursor: 'pointer', fontSize: '0.82rem', fontWeight: 600 }}
+                >
+                  <ExternalLink size={14} /> View Investigation Logs
+                </button>
               </div>
             </div>
 
