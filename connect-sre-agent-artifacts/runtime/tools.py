@@ -2,8 +2,8 @@ import os
 import boto3
 import json
 
-DYNAMODB = boto3.resource("dynamodb", region_name=os.environ.get("AWS_REGION", "us-east-1"))
-S3 = boto3.client("s3", region_name=os.environ.get("AWS_REGION", "us-east-1"))
+DYNAMODB = boto3.resource("dynamodb", region_name=os.environ.get("AWS_REGION", os.environ.get("AWS_DEFAULT_REGION", "us-west-2")))
+S3 = boto3.client("s3", region_name=os.environ.get("AWS_REGION", os.environ.get("AWS_DEFAULT_REGION", "us-west-2")))
 
 TOPOLOGY_TABLE_NAME = os.environ.get("TOPOLOGY_TABLE_NAME", "dev-connect-sre-topology")
 INCIDENT_TABLE_NAME = os.environ.get("INCIDENT_TABLE_NAME", "dev-connect-sre-incidents")
