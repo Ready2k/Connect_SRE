@@ -546,12 +546,13 @@ Signals:
 
 The agent framework and model provider must be separate.
 
-Google ADK orchestrates agents. The model router chooses the provider/model per agent, environment, risk class, or fallback policy.
+The runtime supports two inference provider paths selectable at deploy time via the `MODEL_PROVIDER` environment variable:
 
-Supported providers:
+- **`gemini`** — Google ADK (`google.antigravity`) orchestrates agents with dynamic subagent spawning (`enable_subagents=True`). Default model: `gemini-3.5-flash`.
+- **`bedrock`** — AWS Strands SDK orchestrates 10 statically-registered specialist agents as tools on the supervisor. Default model: `us.anthropic.claude-sonnet-4-6`.
 
-- `gemini`
-- `bedrock`
+The model router chooses the provider/model per environment, risk class, or fallback policy. Additional supported providers (planned):
+
 - `openai_compatible`
 - `mock`
 
@@ -580,14 +581,14 @@ class ModelProvider:
 ```yaml
 modelRouting:
   defaultProvider: bedrock
-  defaultModel: anthropic.claude-3-7-sonnet
+  defaultModel: us.anthropic.claude-sonnet-4-6   # geo-inference ID for us-west-2
   agents:
     connect_supervisor:
       provider: bedrock
-      model: anthropic.claude-3-7-sonnet
+      model: us.anthropic.claude-sonnet-4-6
     flow_health:
       provider: bedrock
-      model: amazon.nova-pro
+      model: us.anthropic.claude-sonnet-4-6
     module_dependency:
       provider: gemini
       model: gemini-2.5-pro
@@ -601,6 +602,14 @@ modelRouting:
       - gemini
       - openai_compatible
 ```
+
+Current Bedrock model IDs (us-west-2 uses geo-inference prefixes — no In-Region support for Claude 4):
+
+| Model | ID |
+|---|---|
+| Claude Sonnet 4.6 (recommended) | `us.anthropic.claude-sonnet-4-6` |
+| Claude Opus 4.7 | `us.anthropic.claude-opus-4-7` |
+| Claude Haiku 4.5 (fastest) | `anthropic.claude-haiku-4-5` |
 
 ### 10.4 Provider Governance
 
