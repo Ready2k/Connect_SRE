@@ -240,10 +240,22 @@ const InstanceOverview = () => {
         }}>
           {[
             { label: 'Active Instances', value: `${activeCount} / ${overview.length}`, icon: <CheckCircle size={18} color="#22c55e" />, color: '#22c55e' },
-            { label: 'Total Open Incidents', value: totalOpen, icon: <AlertTriangle size={18} color="#fbbf24" />, color: '#fbbf24' },
-            { label: 'Critical (SEV1/SEV2)', value: totalCritical, icon: <AlertTriangle size={18} color={totalCritical > 0 ? '#ef4444' : 'var(--text-secondary)'} />, color: totalCritical > 0 ? '#ef4444' : 'var(--text-secondary)' },
+            { label: 'Total Open Incidents', value: totalOpen, icon: <AlertTriangle size={18} color="#fbbf24" />, color: '#fbbf24', link: '/incidents' },
+            { label: 'Critical (SEV1/SEV2)', value: totalCritical, icon: <AlertTriangle size={18} color={totalCritical > 0 ? '#ef4444' : 'var(--text-secondary)'} />, color: totalCritical > 0 ? '#ef4444' : 'var(--text-secondary)', link: '/incidents' },
           ].map((stat, i) => (
-            <div key={i} className="glass-panel" style={{ padding: '1rem 1.25rem', display: 'flex', alignItems: 'center', gap: '1rem' }}>
+            <div key={i} className="glass-panel" 
+                 onClick={stat.link ? () => navigate(stat.link) : undefined}
+                 style={{ 
+                   padding: '1rem 1.25rem', 
+                   display: 'flex', 
+                   alignItems: 'center', 
+                   gap: '1rem',
+                   cursor: stat.link ? 'pointer' : 'default',
+                   transition: stat.link ? 'transform 0.1s, box-shadow 0.1s' : 'none'
+                 }}
+                 onMouseEnter={stat.link ? e => e.currentTarget.style.transform = 'translateY(-2px)' : undefined}
+                 onMouseLeave={stat.link ? e => e.currentTarget.style.transform = 'translateY(0)' : undefined}
+            >
               {stat.icon}
               <div>
                 <div style={{ fontSize: '1.6rem', fontWeight: 700, color: stat.color }}>{stat.value}</div>

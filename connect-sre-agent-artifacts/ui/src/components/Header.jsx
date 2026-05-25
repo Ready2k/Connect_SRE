@@ -254,7 +254,11 @@ const Header = () => {
         )}
 
         {/* Bell Notification */}
-        <div style={{ position: 'relative', cursor: 'pointer' }}>
+        <div 
+          onClick={() => navigate('/incidents')}
+          style={{ position: 'relative', cursor: 'pointer' }}
+          title="View Incidents"
+        >
           <Bell size={20} color="var(--text-secondary)" />
           <div style={{
             position: 'absolute',
