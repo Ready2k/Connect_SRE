@@ -10,6 +10,10 @@ import Topology from './pages/Topology';
 import Approvals from './pages/Approvals';
 import Config from './pages/Config';
 import Logs from './pages/Logs';
+import Journeys from './pages/Journeys';
+import ToolRegistry from './pages/ToolRegistry';
+import Policy from './pages/Policy';
+import Runbooks from './pages/Runbooks';
 
 function App() {
   return (
@@ -25,6 +29,10 @@ function App() {
             <Route path="/monitoring" element={<Monitoring />} />
             <Route path="/topology" element={<Topology />} />
             <Route path="/approvals" element={<Approvals />} />
+            <Route path="/journeys" element={<Journeys />} />
+            <Route path="/tools" element={<ToolRegistry />} />
+            <Route path="/policy" element={<Policy />} />
+            <Route path="/runbooks" element={<Runbooks />} />
             <Route path="/config" element={<Config />} />
             <Route path="/logs" element={<Logs />} />
             <Route path="*" element={<Navigate to="/" />} />

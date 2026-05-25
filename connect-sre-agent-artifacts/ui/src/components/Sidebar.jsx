@@ -7,7 +7,11 @@ import {
   Network, 
   CheckCircle, 
   Settings,
-  FileText 
+  FileText,
+  Route,
+  Wrench,
+  ShieldAlert,
+  BookOpen
 } from 'lucide-react';
 
 const Sidebar = () => {
@@ -15,9 +19,13 @@ const Sidebar = () => {
     { icon: <Home size={20} />, label: 'Home', path: '/' },
     { icon: <AlertTriangle size={20} />, label: 'Incidents', path: '/incidents' },
     { icon: <Bot size={20} />, label: 'Agents', path: '/agents' },
+    { icon: <CheckCircle size={20} />, label: 'Approvals', path: '/approvals' },
     { icon: <Activity size={20} />, label: 'Monitoring', path: '/monitoring' },
     { icon: <Network size={20} />, label: 'Topology', path: '/topology' },
-    { icon: <CheckCircle size={20} />, label: 'Approvals', path: '/approvals' },
+    { icon: <Route size={20} />, label: 'Journeys', path: '/journeys' },
+    { icon: <Wrench size={20} />, label: 'Tool Registry', path: '/tools' },
+    { icon: <ShieldAlert size={20} />, label: 'Policy', path: '/policy' },
+    { icon: <BookOpen size={20} />, label: 'Runbooks', path: '/runbooks' },
     { icon: <Settings size={20} />, label: 'Config', path: '/config' },
     { icon: <FileText size={20} />, label: 'Logs', path: '/logs' }
   ];
@@ -31,7 +39,7 @@ const Sidebar = () => {
         <span style={{ fontWeight: 700, letterSpacing: '0.05em', color: 'var(--text-primary)' }}>CONNECT SRE</span>
       </div>
       
-      <nav style={{ flex: 1, padding: '1.5rem 1rem' }}>
+      <nav style={{ flex: 1, padding: '1.5rem 1rem', overflowY: 'auto' }}>
         <ul style={{ listStyle: 'none', padding: 0, margin: 0, display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
           {navItems.map((item, idx) => (
             <li key={idx}>
