@@ -462,17 +462,67 @@ async def update_model_config(payload: ModelConfigPayload):
     logger.info(f"Model config updated: {_model_config}")
     return {"status": "saved", "config": _model_config}
 
+@app.get("/api/logs")
+async def get_system_logs():
+    """
+    Generate dynamic system logs based on traces and incident states.
+    """
+    logs = []
+    try:
+        table = dynamodb.Table(TRACE_TABLE_NAME)
+        response = table.scan()
+        for trace in response.get('Items', []):
+            logs.append({
+                "time": trace.get("startedAt", ""),
+                "source": trace.get("agentName", "System"),
+                "type": "Trace",
+                "details": f"Ran tool {', '.join(trace.get('toolCalls', []))} for {trace.get('incidentId', '')}",
+                "status": trace.get("status", "Success").capitalize()
+            })
+            
+        incident_table = dynamodb.Table(INCIDENT_TABLE)
+        inc_response = incident_table.scan()
+        for inc in inc_response.get('Items', []):
+            if inc.get("status") == "Investigating":
+                logs.append({
+                    "time": inc.get("updatedAt", datetime.utcnow().isoformat() + "Z"),
+                    "source": "SupervisorAgent",
+                    "type": "Investigation",
+                    "details": f"Triggered full analysis for {inc.get('incidentId', '')}",
+                    "status": "In Progress"
+                })
+                
+        logs.sort(key=lambda x: x['time'], reverse=True)
+    except Exception as e:
+        logger.error(f"Failed to fetch logs: {e}")
+        
+    if not logs:
+        # Fallback empty state
+        return [{"time": datetime.utcnow().isoformat() + "Z", "source": "System", "type": "Info", "details": "No recent activity", "status": "Success"}]
+    return logs
+
 @app.get("/api/agents/status")
 async def get_agents_status():
     """
-    Returns the mocked status of the Antigravity Agent Swarm.
-    In a fully stateful app, this would query an AgentRunTable DynamoDB table.
+    Returns the dynamic status of the Antigravity Agent Swarm.
+    Checks if there are active investigations.
     """
+    status_label = "Idle"
+    try:
+        table = dynamodb.Table(INCIDENT_TABLE)
+        response = table.scan(
+            FilterExpression=boto3.dynamodb.conditions.Attr('status').eq('Investigating')
+        )
+        if len(response.get('Items', [])) > 0:
+            status_label = "Investigating"
+    except Exception:
+        pass
+
     return {
       "supervisor": {
         "id": "supervisor",
         "name": "Connect Supervisor Agent",
-        "status": "Orchestrating",
+        "status": status_label,
         "health": "100%",
         "model": _ACTIVE_MODEL_LABEL,
         "tasks": 12,
@@ -482,7 +532,7 @@ async def get_agents_status():
         {
           "id": "flow",
           "name": "Flow Health Agent",
-          "status": "Idle",
+          "status": status_label if status_label == "Investigating" else "Idle",
           "health": "100%",
           "model": _ACTIVE_MODEL_LABEL,
           "tasks": 4,

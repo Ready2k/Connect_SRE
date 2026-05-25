@@ -1,14 +1,15 @@
+import { useState, useEffect } from 'react';
 import { FileText } from 'lucide-react';
 
-const logData = [
-  { time: '14:32:01 UTC', source: 'EventBridge', type: 'Ingest', details: 'Received CW Metric Alarm: us-west-2 ccp-latency-high', status: 'Success' },
-  { time: '14:32:05 UTC', source: 'TopologyAgent', type: 'Query', details: 'Walk topology from ContactFlow_v4 to Queue_Sales', status: 'Success' },
-  { time: '14:32:10 UTC', source: 'DiagnosticAgent', type: 'Model Call', details: 'Analyze lambda logs for FetchCustomerProfile', status: 'Success' },
-  { time: '14:32:45 UTC', source: 'PolicyEngine', type: 'Evaluate', details: 'Check rollback safety for ContactFlow_v4', status: 'Approved' },
-  { time: '14:33:00 UTC', source: 'ManagementUI', type: 'Dispatch', details: 'Render Pending Approval INC-2023-01', status: 'Success' }
-];
-
 const Logs = () => {
+  const [logData, setLogData] = useState([]);
+
+  useEffect(() => {
+    fetch('/api/logs')
+      .then(res => res.json())
+      .then(data => setLogData(data))
+      .catch(err => console.error(err));
+  }, []);
   return (
     <div style={{ padding: '1rem', height: '100%', display: 'flex', flexDirection: 'column' }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '1.5rem' }}>
@@ -30,7 +31,7 @@ const Logs = () => {
           <tbody>
             {logData.map((log, idx) => (
               <tr key={idx} style={{ borderBottom: '1px solid rgba(255,255,255,0.05)', transition: 'background 0.2s' }}>
-                <td style={{ padding: '1rem', fontFamily: 'monospace', color: 'var(--text-secondary)' }}>{log.time}</td>
+                <td style={{ padding: '1rem', fontFamily: 'monospace', color: 'var(--text-secondary)' }}>{new Date(log.time).toLocaleTimeString()}</td>
                 <td style={{ padding: '1rem' }}>{log.source}</td>
                 <td style={{ padding: '1rem', color: 'var(--accent-cyan)' }}>{log.type}</td>
                 <td style={{ padding: '1rem', color: 'var(--text-secondary)' }}>{log.details}</td>
