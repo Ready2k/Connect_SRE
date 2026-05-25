@@ -1,6 +1,8 @@
 import GlobalTopology from '../components/widgets/GlobalTopology';
+import { useAppContext } from '../context/AppContext';
 
 const Topology = () => {
+  const { mode, activeInstance } = useAppContext();
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%', padding: '1rem' }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem' }}>
@@ -23,7 +25,7 @@ const Topology = () => {
       </div>
       
       <div className="glass-panel" style={{ flex: 1, display: 'flex', flexDirection: 'column' }}>
-        <GlobalTopology />
+        <GlobalTopology mode={mode} instanceId={activeInstance?.instanceId || ''} />
       </div>
     </div>
   );

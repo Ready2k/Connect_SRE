@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { useAppContext } from '../context/AppContext';
 import SREOverview from '../components/widgets/SREOverview';
 import SystemHealth from '../components/widgets/SystemHealth';
 import GlobalTopology from '../components/widgets/GlobalTopology';
@@ -10,28 +11,40 @@ import PendingApprovals from '../components/widgets/PendingApprovals';
 import ActivityFeed from '../components/widgets/ActivityFeed';
 
 const Home = () => {
+  const { mode, activeInstance } = useAppContext();
   const [metrics, setMetrics] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
 
   useEffect(() => {
     const fetchMetrics = () => {
-      fetch('/api/monitoring/metrics')
-        .then(res => res.json())
+      const params = new URLSearchParams({ mode });
+      if (activeInstance?.instanceId) params.set('instanceId', activeInstance.instanceId);
+      fetch(`/api/monitoring/metrics?${params}`)
+        .then(res => {
+          if (!res.ok) {
+            return res.json().then(err => { throw new Error(err.detail || "API Error") });
+          }
+          return res.json();
+        })
         .then(data => {
           setMetrics(data);
+          setError(null);
           setLoading(false);
         })
         .catch(err => {
           console.error("Failed to fetch monitoring metrics", err);
+          setError(err.message);
+          setLoading(false);
         });
     };
 
     fetchMetrics();
     const interval = setInterval(fetchMetrics, 5000);
     return () => clearInterval(interval);
-  }, []);
+  }, [mode, activeInstance]);
 
-  if (loading) {
+  if (loading && !metrics && !error) {
     return (
       <div style={{ 
         display: 'flex', 
@@ -47,6 +60,16 @@ const Home = () => {
     );
   }
 
+  if (error && !metrics) {
+    return (
+      <div style={{ padding: '2rem', color: 'var(--status-critical)' }}>
+        <h3>Error loading dashboard metrics</h3>
+        <p>{error}</p>
+        <p style={{ color: 'var(--text-secondary)', fontSize: '0.9rem' }}>Check your AWS IAM permissions (KMS Decrypt) and backend logs.</p>
+      </div>
+    );
+  }
+
   return (
     <div className="dashboard-grid">
       <div className="glass-panel widget overview-widget">
@@ -56,7 +79,7 @@ const Home = () => {
         <SystemHealth data={metrics.systemHealth} />
       </div>
       <div className="glass-panel widget topology-widget">
-        <GlobalTopology />
+        <GlobalTopology mode={mode} instanceId={activeInstance?.instanceId || ''} />
       </div>
       <div className="glass-panel widget queues-widget">
         <QueuesChart data={metrics.queueVolumes} />

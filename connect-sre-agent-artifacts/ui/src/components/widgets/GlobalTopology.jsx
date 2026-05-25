@@ -2,13 +2,16 @@ import { useState, useEffect } from 'react';
 import ReactFlow, { Background } from 'reactflow';
 import 'reactflow/dist/style.css';
 
-const GlobalTopology = () => {
+const GlobalTopology = ({ mode = 'demo', instanceId = '' }) => {
   const [nodes, setNodes] = useState([]);
   const [edges, setEdges] = useState([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    fetch('/api/topology')
+    setLoading(true);
+    const params = new URLSearchParams({ mode });
+    if (instanceId) params.set('instanceId', instanceId);
+    fetch(`/api/topology?${params}`)
       .then(res => res.json())
       .then(data => {
         // Apply custom styling to fetched nodes and edges
@@ -39,7 +42,7 @@ const GlobalTopology = () => {
         console.error("Failed to fetch topology", err);
         setLoading(false);
       });
-  }, []);
+  }, [mode, instanceId]);
 
   return (
     <>

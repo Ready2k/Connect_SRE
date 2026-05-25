@@ -1,4 +1,5 @@
 import { NavLink } from 'react-router-dom';
+import { useAppContext } from '../context/AppContext';
 import { 
   Home, 
   AlertTriangle, 
@@ -11,11 +12,14 @@ import {
   Route,
   Wrench,
   ShieldAlert,
-  BookOpen
+  BookOpen,
+  Server
 } from 'lucide-react';
 
 const Sidebar = () => {
+  const { mode } = useAppContext();
   const navItems = [
+    ...(mode === 'live' ? [{ icon: <Server size={20} />, label: 'Instances', path: '/instances' }] : []),
     { icon: <Home size={20} />, label: 'Home', path: '/' },
     { icon: <AlertTriangle size={20} />, label: 'Incidents', path: '/incidents' },
     { icon: <Bot size={20} />, label: 'Agents', path: '/agents' },
