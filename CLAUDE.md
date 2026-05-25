@@ -160,6 +160,35 @@ us-west-2 has no In-Region support for Claude 4 models — use geo inference IDs
 
 Gemini: `gemini-3.5-flash` (GA, recommended), `gemini-2.5-pro`, `gemini-2.5-flash`
 
+### IAM user `connect-sre-agent-runtime` (manually managed, outside CloudFormation)
+
+This IAM user provides credentials to the ECS container via `~/.aws`. Required permissions:
+- `bedrock:InvokeModel` + `bedrock:InvokeModelWithResponseStream` — **Resource: `"*"`** (cross-region inference routes through us-east-1, not just us-west-2)
+- `connect:GetCurrentMetricData` — real-time queue/flow metrics
+- `connect:GetMetricDataV2` — historical metrics used by `query_connect_metrics` tool
+- All DynamoDB table actions on the `dev-connect-sre-*` tables
+- CloudWatch Logs Insights (`logs:StartQuery`, `logs:GetQueryResults`, `logs:DescribeLogGroups`, `logs:DescribeLogStreams`)
+
+When adding Connect API calls to `tools.py`, check `GetMetricDataV2` vs `GetCurrentMetricData` — they are **separate IAM actions** requiring separate grants.
+
+### Topology scanner must be run before the agent can be useful
+
+The agent's blast-radius, flow-health, and module-dependency specialists all read from the DynamoDB topology graph (`dev-connect-sre-topology`). This table is **empty until the topology scanner runs**. Without it, the agent cannot scope incidents to specific resources and will block on every blast-radius check.
+
+To populate for a Connect instance:
+```bash
+./connect-sre-agent-artifacts/infra/scripts/test_topology_scanner.sh
+# or manually:
+cd connect-sre-agent-artifacts/infra/src
+TOPOLOGY_TABLE_NAME=dev-connect-sre-topology CONNECT_INSTANCE_IDS=<uuid> python topology_scanner.py
+```
+
+### CloudWatch alarms must carry Connect resource dimensions
+
+The normalizer extracts `connectInstanceId` and `connectResourceId` from alarm dimensions. A bare alarm name (e.g. `Test-Connect-Fatal-Errors`) with no `InstanceId`/`ContactFlowId` dimensions means the agent has no resource IDs to query — it will block investigation immediately. Alarms should include:
+- Dimension `InstanceId`: the Connect instance UUID
+- Dimension `ContactFlowId` or `QueueId`: the specific resource in alarm
+
 ## Key constraints
 
 - **Connect-specific** — all detection and diagnosis must be grounded in Connect concepts (flows, modules, queues, routing profiles, Lex bots, Q in Connect). Not a generic AWS SRE tool.

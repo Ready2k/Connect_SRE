@@ -9,7 +9,7 @@ TOPOLOGY_TABLE_NAME = os.environ.get("TOPOLOGY_TABLE_NAME", "dev-connect-sre-top
 INCIDENT_TABLE_NAME = os.environ.get("INCIDENT_TABLE_NAME", "dev-connect-sre-incidents")
 APPROVAL_TABLE_NAME = os.environ.get("APPROVAL_TABLE_NAME", "dev-connect-sre-approvals")
 POLICY_TABLE_NAME = os.environ.get("POLICY_TABLE_NAME", "dev-connect-sre-policy-config")
-RUNBOOK_BUCKET_NAME = os.environ.get("RUNBOOK_BUCKET_NAME", "")
+RUNBOOK_BUCKET_NAME = os.environ.get("RUNBOOK_BUCKET_NAME", os.environ.get("RUNBOOKS_BUCKET_NAME", ""))
 
 
 def query_topology(node_id: str) -> str:

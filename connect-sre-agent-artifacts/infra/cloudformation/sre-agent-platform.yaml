@@ -751,6 +751,7 @@ Resources:
                   - connect:ListBots
                   - connect:ListLambdaFunctions
                   - connect:GetCurrentMetricData
+                  - connect:GetMetricDataV2
                   - cloudwatch:DescribeAlarms
                   - cloudwatch:GetMetricData
                   - cloudwatch:GetMetricStatistics
