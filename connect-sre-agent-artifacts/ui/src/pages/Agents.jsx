@@ -20,7 +20,13 @@ const Agents = () => {
   const [agentDetails, setAgentDetails] = useState(null);
   const [selectedAgent, setSelectedAgent] = useState(null);
   const [loading, setLoading] = useState(true);
-  const [config, setConfig] = useState({ logGroupName: '', defaultTimeWindowMinutes: 60 });
+  const [config, setConfig] = useState({ 
+    logGroupName: '', 
+    defaultTimeWindowMinutes: 60,
+    contactFlowLogsLocation: '',
+    assumeRoleArn: '',
+    iamExecutionRole: ''
+  });
   const [savingConfig, setSavingConfig] = useState(false);
 
   useEffect(() => {
@@ -66,7 +72,9 @@ const Agents = () => {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           logGroupName: config.logGroupName,
-          defaultTimeWindowMinutes: parseInt(config.defaultTimeWindowMinutes, 10) || 60
+          defaultTimeWindowMinutes: parseInt(config.defaultTimeWindowMinutes, 10) || 60,
+          contactFlowLogsLocation: config.contactFlowLogsLocation,
+          assumeRoleArn: config.assumeRoleArn
         })
       });
     } catch (e) {
@@ -145,21 +153,64 @@ const Agents = () => {
               <label style={{ display: 'block', fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: '0.3rem' }}>CloudWatch Log Group Name</label>
               <input 
                 type="text" 
-                value={config.logGroupName} 
+                value={config.logGroupName || ''} 
                 onChange={(e) => setConfig({...config, logGroupName: e.target.value})}
                 placeholder="/aws/connect/instance-id"
                 style={{ width: '100%', padding: '0.5rem', borderRadius: '4px', border: '1px solid var(--border-glass)', background: 'rgba(0,0,0,0.2)', color: 'white' }}
               />
             </div>
             <div>
+              <label style={{ display: 'block', fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: '0.3rem' }}>Contact Flow Logs Location</label>
+              <input 
+                type="text" 
+                value={config.contactFlowLogsLocation || ''} 
+                onChange={(e) => setConfig({...config, contactFlowLogsLocation: e.target.value})}
+                placeholder="s3://bucket-name/prefix/ or /aws/connect/flow-logs"
+                style={{ width: '100%', padding: '0.5rem', borderRadius: '4px', border: '1px solid var(--border-glass)', background: 'rgba(0,0,0,0.2)', color: 'white' }}
+              />
+              <p style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', margin: '0.2rem 0 0' }}>Where are the raw Connect flow traces stored? The agent will scan these to debug routing issues.</p>
+            </div>
+            <div>
               <label style={{ display: 'block', fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: '0.3rem' }}>Default Search Window (Minutes)</label>
               <input 
                 type="number" 
-                value={config.defaultTimeWindowMinutes} 
+                value={config.defaultTimeWindowMinutes || 60} 
                 onChange={(e) => setConfig({...config, defaultTimeWindowMinutes: e.target.value})}
                 style={{ width: '100%', padding: '0.5rem', borderRadius: '4px', border: '1px solid var(--border-glass)', background: 'rgba(0,0,0,0.2)', color: 'white' }}
               />
             </div>
+          </div>
+          
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '1rem', marginTop: '2rem' }}>
+            <Settings size={18} color="var(--text-secondary)" />
+            <h3 style={{ fontSize: '1.1rem', fontWeight: 600 }}>Agent Execution Boundaries</h3>
+          </div>
+          
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+            <div style={{ background: 'rgba(255,255,255,0.05)', padding: '1rem', borderRadius: '8px', border: '1px solid var(--border-glass)' }}>
+              <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: '0.3rem' }}>Current IAM Execution Role</div>
+              <div style={{ fontFamily: 'monospace', fontSize: '0.85rem', color: 'var(--status-ok)', wordBreak: 'break-all' }}>
+                {config.iamExecutionRole || 'Loading...'}
+              </div>
+              <p style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', margin: '0.5rem 0 0' }}>
+                This is the default ECS Task Role. To restrict what the agent can do, provide an explicit role below for it to assume via AWS STS.
+              </p>
+            </div>
+            
+            <div>
+              <label style={{ display: 'block', fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: '0.3rem' }}>IAM Role ARN to Assume (Optional)</label>
+              <input 
+                type="text" 
+                value={config.assumeRoleArn || ''} 
+                onChange={(e) => setConfig({...config, assumeRoleArn: e.target.value})}
+                placeholder="arn:aws:iam::123456789012:role/ScopedAgentRole"
+                style={{ width: '100%', padding: '0.5rem', borderRadius: '4px', border: '1px solid var(--border-glass)', background: 'rgba(0,0,0,0.2)', color: 'white' }}
+              />
+              <p style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', margin: '0.2rem 0 0' }}>
+                If specified, the agent will assume this scoped-down role before executing AWS API calls, ensuring strict cryptographic boundaries.
+              </p>
+            </div>
+
             <button 
               onClick={handleSaveConfig}
               disabled={savingConfig}

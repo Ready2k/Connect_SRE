@@ -317,24 +317,33 @@ async def create_trace(request: Request):
 async def get_agent_config():
     try:
         table = dynamodb.Table(POLICY_TABLE)
-        response = table.get_item(Key={'policyName': 'AgentToolConfig'})
+        response = table.get_item(Key={'policyId': 'AgentToolConfig'})
+        
+        default_config = {
+            "logGroupName": "/aws/connect/default",
+            "defaultTimeWindowMinutes": 60,
+            "contactFlowLogsLocation": "s3://connect-contact-flow-logs/",
+            "assumeRoleArn": ""
+        }
+        
         if 'Item' in response:
-            return response['Item'].get('config', {})
+            stored_config = response['Item'].get('config', {})
+            # Merge with defaults to ensure all fields are present
+            return {**default_config, **stored_config, "iamExecutionRole": "arn:aws:iam::[account]:role/AgentRuntimeTaskRole"}
         else:
-            return {
-                "logGroupName": "/aws/connect/default",
-                "defaultTimeWindowMinutes": 60
-            }
+            return {**default_config, "iamExecutionRole": "arn:aws:iam::[account]:role/AgentRuntimeTaskRole"}
     except Exception as e:
         logger.error(f"Failed to fetch agent config: {e}")
         return {"error": str(e)}
 
 @app.patch("/api/agents/config")
-async def update_agent_config(payload: dict):
+async def update_agent_config(payload: dict, mode: str = Query("demo")):
+    if mode == "demo":
+        return {"status": "success"}
     try:
         table = dynamodb.Table(POLICY_TABLE)
         table.put_item(Item={
-            'policyName': 'AgentToolConfig',
+            'policyId': 'AgentToolConfig',
             'enabled': True,
             'config': payload
         })
@@ -481,15 +490,38 @@ async def get_tools(mode: str = Query("demo")):
 async def get_policy(mode: str = Query("demo")):
     if mode == "demo":
         return [
-            {"policyId": "POL-001", "name": "Require Human Approval for Routing Changes", "status": "Enforced"}
+            {"policyId": "POL-001", "name": "Require Human Approval for Remediations", "description": "Mandates that any state-changing remediation action must be explicitly approved by a human in the UI.", "enabled": True},
+            {"policyId": "POL-002", "name": "Allow Connect Routing Profile Modification", "description": "Grants the agent permission to dynamically change routing profiles during a severe queue backup.", "enabled": False},
+            {"policyId": "POL-003", "name": "Allow Connect Prompt Creation", "description": "Grants the agent permission to create temporary audio prompts for emergency IVR broadcasts.", "enabled": True}
         ]
     try:
         table = dynamodb.Table(POLICY_TABLE)
         response = table.scan()
-        return response.get('Items', [])
+        items = response.get('Items', [])
+        # Filter out AgentToolConfig which is internal
+        return [item for item in items if item.get('policyId') != 'AgentToolConfig']
     except Exception as e:
         logger.error(f"Failed to fetch policy: {e}")
         return []
+
+@app.patch("/api/policy")
+async def update_policy(payload: list, mode: str = Query("demo")):
+    if mode == "demo":
+        return {"status": "success"}
+    try:
+        table = dynamodb.Table(POLICY_TABLE)
+        with table.batch_writer() as batch:
+            for policy in payload:
+                batch.put_item(Item={
+                    'policyId': policy['policyId'],
+                    'name': policy.get('name'),
+                    'description': policy.get('description'),
+                    'enabled': policy.get('enabled', False)
+                })
+        return {"status": "success"}
+    except Exception as e:
+        logger.error(f"Failed to update policies: {e}")
+        return {"status": "error", "message": str(e)}
 
 @app.get("/api/runbooks")
 async def get_runbooks(mode: str = Query("demo")):

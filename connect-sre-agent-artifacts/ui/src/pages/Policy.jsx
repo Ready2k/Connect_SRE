@@ -20,11 +20,24 @@ const Policy = () => {
       });
   }, []);
 
-  const togglePolicy = (index) => {
+  const togglePolicy = async (index) => {
     const newPolicies = [...policies];
     newPolicies[index].enabled = !newPolicies[index].enabled;
     setPolicies(newPolicies);
-    // In a fully wired app, this would PATCH to the backend.
+    
+    try {
+      await fetch(`/api/policy?mode=${mode}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(newPolicies)
+      });
+    } catch (err) {
+      console.error("Failed to update policy", err);
+      // Revert on failure
+      const reverted = [...newPolicies];
+      reverted[index].enabled = !reverted[index].enabled;
+      setPolicies(reverted);
+    }
   };
 
   return (
