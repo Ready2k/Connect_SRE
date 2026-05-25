@@ -67,7 +67,7 @@ function StepRow({ step }) {
       </div>
 
       {/* Content */}
-      <div style={{ flex: 1, paddingBottom: '1rem' }}>
+      <div style={{ flex: 1, minWidth: 0, paddingBottom: '1rem' }}>
         {/* Header row */}
         <div
           onClick={() => step.detail && setExpanded(e => !e)}
@@ -75,6 +75,7 @@ function StepRow({ step }) {
             display: 'flex', alignItems: 'center', gap: '0.5rem',
             cursor: step.detail ? 'pointer' : 'default',
             marginBottom: expanded ? '0.5rem' : 0,
+            overflow: 'hidden',
           }}
         >
           {/* Agent badge */}
