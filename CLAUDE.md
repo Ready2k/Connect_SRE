@@ -156,7 +156,7 @@ Feature flags (CloudFormation parameters, both default `false`):
 us-west-2 has no In-Region support for Claude 4 models — use geo inference IDs:
 - `us.anthropic.claude-sonnet-4-6` — recommended default
 - `us.anthropic.claude-opus-4-7` — most capable
-- `us.anthropic.claude-haiku-4-5-20251001` — fastest/cheapest
+- `us.anthropic.claude-haiku-4-5-20251001-v1:0` — fastest/cheapest
 
 Gemini: `gemini-3.5-flash` (GA, recommended), `gemini-2.5-pro`, `gemini-2.5-flash`
 

@@ -146,20 +146,22 @@ def fetch_runbook(topic: str) -> dict:
     except Exception as e:
         return {"status": "error", "message": str(e)}
 
-def propose_remediation(action_type: str, params: dict, incident_id: str, justification: str) -> dict:
+def propose_remediation(action_type: str, params: str, incident_id: str, justification: str) -> str:
     """
-    Propose a remediation action for a human supervisor to approve. 
+    Propose a remediation action for a human supervisor to approve.
     This creates an approval ticket in DynamoDB which will later be executed by the action_dispatcher.
-    
+
     Args:
         action_type (str): The strict name of the action (e.g., 'connect_toggle_emergency_routing').
-        params (dict): Key-value parameters required by the action.
+        params (str): JSON-serialized key-value parameters required by the action (e.g., '{"targetNodeId": "abc"}').
         incident_id (str): The ID of the incident this remediates.
         justification (str): The agent's reasoning for why this action is required.
     """
     try:
         import uuid
         import datetime
+        import json
+        params = json.loads(params) if isinstance(params, str) else params
         
         # 1. Fetch policies
         policy_table = DYNAMODB.Table(POLICY_TABLE_NAME)
@@ -203,14 +205,11 @@ def propose_remediation(action_type: str, params: dict, incident_id: str, justif
                 
         # If blocked, return immediately so the agent knows it failed
         if blocked_reason:
-            return {
-                "status": "BLOCKED",
-                "message": blocked_reason
-            }
-        
+            return json.dumps({"status": "BLOCKED", "message": blocked_reason})
+
         approval_id = f"APP-{uuid.uuid4().hex[:8].upper()}"
         now = datetime.datetime.utcnow().isoformat() + "Z"
-        
+
         table = DYNAMODB.Table(APPROVAL_TABLE_NAME)
         table.put_item(Item={
             "approvalId": approval_id,
@@ -221,19 +220,13 @@ def propose_remediation(action_type: str, params: dict, incident_id: str, justif
             "justification": justification,
             "createdAt": now
         })
-        
+
         if status == "AUTO_APPROVED":
-            return {
-                "status": "success", 
-                "message": f"Remediation ticket {approval_id} was automatically approved by SEV4 policy and dispatched."
-            }
-        else:
-            return {
-                "status": "success", 
-                "message": f"Remediation ticket {approval_id} created successfully and is awaiting human approval."
-            }
+            return json.dumps({"status": "success", "message": f"Remediation ticket {approval_id} was automatically approved by SEV4 policy and dispatched."})
+        return json.dumps({"status": "success", "message": f"Remediation ticket {approval_id} created and awaiting human approval."})
     except Exception as e:
-        return {"status": "error", "message": str(e)}
+        import json as _json
+        return _json.dumps({"status": "error", "message": str(e)})
 
 def _get_agent_config() -> dict:
     default_config = {

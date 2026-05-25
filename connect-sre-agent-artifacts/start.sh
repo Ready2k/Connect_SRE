@@ -23,7 +23,7 @@ case "${PROVIDER_CHOICE:-1}" in
     echo "Available Claude models on Bedrock:"
     echo "  a) us.anthropic.claude-sonnet-4-6  (Claude Sonnet 4.6 — recommended, geo inference)"
     echo "  b) us.anthropic.claude-opus-4-7    (Claude Opus 4.7 — most capable, geo inference)"
-    echo "  c) us.anthropic.claude-haiku-4-5-20251001  (Claude Haiku 4.5 — fastest/cheapest, geo inference)"
+    echo "  c) us.anthropic.claude-haiku-4-5-20251001-v1:0  (Claude Haiku 4.5 — fastest/cheapest, geo inference)"
     echo "  Or type a full model ID to use any other."
     read -rp "Model [a-c or full ID, default: a]: " MODEL_CHOICE
     echo ""
@@ -31,7 +31,7 @@ case "${PROVIDER_CHOICE:-1}" in
     case "${MODEL_CHOICE:-a}" in
       a|"") BEDROCK_MODEL_ID="us.anthropic.claude-sonnet-4-6" ;;
       b)    BEDROCK_MODEL_ID="us.anthropic.claude-opus-4-7" ;;
-      c)    BEDROCK_MODEL_ID="us.anthropic.claude-haiku-4-5-20251001" ;;
+      c)    BEDROCK_MODEL_ID="us.anthropic.claude-haiku-4-5-20251001-v1:0" ;;
       *)    BEDROCK_MODEL_ID="$MODEL_CHOICE" ;;
     esac
 

@@ -609,7 +609,7 @@ Current Bedrock model IDs (us-west-2 uses geo-inference prefixes — no In-Regio
 |---|---|
 | Claude Sonnet 4.6 (recommended) | `us.anthropic.claude-sonnet-4-6` |
 | Claude Opus 4.7 | `us.anthropic.claude-opus-4-7` |
-| Claude Haiku 4.5 (fastest) | `us.anthropic.claude-haiku-4-5-20251001` |
+| Claude Haiku 4.5 (fastest) | `us.anthropic.claude-haiku-4-5-20251001-v1:0` |
 
 ### 10.4 Provider Governance
 
