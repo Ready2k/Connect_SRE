@@ -11,7 +11,7 @@ const Incidents = () => {
   const [loading, setLoading] = useState(true);
   const [triggering, setTriggering] = useState(false);
 
-  const ACTIVE_STATUSES = new Set(['Investigating', 'Open', 'Pending', 'Triggered', 'Escalated']);
+  const ACTIVE_STATUSES = new Set(['Investigating', 'Open', 'Pending', 'Triggered', 'Escalated', 'Failed', 'Failed - Rate Limited']);
 
   const fetchApprovals = () =>
     fetch(`/api/approvals?mode=${mode}`)

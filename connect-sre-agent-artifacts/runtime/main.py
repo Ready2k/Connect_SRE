@@ -118,7 +118,19 @@ async def investigate_incident_background(payload: IncidentPayload):
     except Exception as e:
         latency_ms = int((time.time() - start_time) * 1000)
         logger.error(f"Agent execution failed for incident {payload.incidentId}: {str(e)}")
-        _write_trace(run_id, payload.incidentId, started_at, latency_ms, "error", str(e)[:2000])
+        is_quota = "429" in str(e) or "quota" in str(e).lower() or "RESOURCE_EXHAUSTED" in str(e)
+        failure_status = "Failed - Rate Limited" if is_quota else "Failed"
+        error_summary = "Gemini API free-tier quota exhausted. Upgrade API key or switch to Bedrock." if is_quota else str(e)[:500]
+        _write_trace(run_id, payload.incidentId, started_at, latency_ms, "error", error_summary)
+        try:
+            dynamodb.Table(INCIDENT_TABLE).update_item(
+                Key={'incidentId': payload.incidentId},
+                UpdateExpression="SET #s = :s",
+                ExpressionAttributeNames={'#s': 'status'},
+                ExpressionAttributeValues={':s': failure_status}
+            )
+        except Exception as db_err:
+            logger.error(f"Failed to update incident status after agent error: {db_err}")
 
 @app.get("/health")
 async def health_check():
