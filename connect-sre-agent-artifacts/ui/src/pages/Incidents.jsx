@@ -50,7 +50,7 @@ const Incidents = () => {
                 }}>{inc.severity} | {inc.incidentId}</span>
                 <span style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>{inc.createdAt}</span>
               </div>
-              <div style={{ fontWeight: 500, marginBottom: '0.5rem' }}>{inc.description}</div>
+              <div style={{ fontWeight: 500, marginBottom: '0.5rem' }}>{inc.title}</div>
               <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
                 <span>{inc.source}</span>
                 <span style={{ color: 'inherit' }}>{inc.status || "Investigating"}</span>
@@ -65,7 +65,7 @@ const Incidents = () => {
         <div className="glass-panel" style={{ flex: 2, display: 'flex', flexDirection: 'column' }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '1.5rem' }}>
             <div>
-              <h2 style={{ fontSize: '1.4rem', fontWeight: 600, marginBottom: '0.5rem' }}>{selected.description}</h2>
+              <h2 style={{ fontSize: '1.4rem', fontWeight: 600, marginBottom: '0.5rem' }}>{selected.title}</h2>
               <div style={{ display: 'flex', gap: '1rem', color: 'var(--text-secondary)', fontSize: '0.85rem' }}>
                 <span>ID: {selected.incidentId}</span>
                 <span>Source: {selected.source}</span>

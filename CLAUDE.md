@@ -64,7 +64,14 @@ Single-page React 19 app with React Router 7. Routes:
 | `/config` | Model router + policy configuration |
 | `/logs` | Audit trail |
 
-Key libraries: Recharts (metrics charts), React Flow (topology graph), Lucide React (icons). Styling is vanilla CSS with CSS variables — no CSS framework.
+Key libraries: `reactflow` (topology graph), Recharts (metrics charts), Lucide React (icons). Styling is vanilla CSS with CSS variables — no CSS framework.
+
+**API integration:** Several components make `fetch` calls to `/api/*` endpoints. Vite proxies these to `http://127.0.0.1:8000` during development (`vite.config.js`). The backend API server at port 8000 is **not yet implemented** in this repo — components that call it (`Incidents`, `Agents`, `Topology`, `PendingApprovals`) will fall back to their error/loading states without it. Endpoints expected:
+- `GET /api/incidents`
+- `GET /api/agents/status`
+- `GET /api/topology`
+- `GET /api/approvals`
+- `POST /api/approvals/{id}/action`
 
 ### Backend Lambda functions (`infra/src/`)
 

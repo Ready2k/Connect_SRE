@@ -25,8 +25,21 @@ class IncidentPayload(BaseModel):
     incidentId: str
     source: str
     severity: str
-    description: str
-    metadata: Dict[str, Any]
+    title: str
+    details: str = ""
+    metadata: Dict[str, Any] = {}
+
+class ModelConfigPayload(BaseModel):
+    agentMode: str
+    primaryModel: str
+    fallbackModel: str = ""
+
+# In-memory config state (demo only — no DynamoDB config table yet)
+_model_config: Dict[str, Any] = {
+    "agentMode": "recommend_only",
+    "primaryModel": "gemini-1.5-pro",
+    "fallbackModel": "claude-3-sonnet",
+}
 
 async def investigate_incident_background(payload: IncidentPayload):
     logger.info(f"Starting investigation for incident {payload.incidentId}")
@@ -37,7 +50,8 @@ async def investigate_incident_background(payload: IncidentPayload):
                 f"Incident ID: {payload.incidentId}\n"
                 f"Source: {payload.source}\n"
                 f"Severity: {payload.severity}\n"
-                f"Description: {payload.description}\n"
+                f"Title: {payload.title}\n"
+                f"Details: {payload.details}\n"
                 f"Metadata: {payload.metadata}\n\n"
                 f"Please begin your investigation immediately by spawning the appropriate subagents."
             )
@@ -85,19 +99,19 @@ async def get_topology():
         
         for item in items:
             if item.get('edgeTypeTarget') == 'METADATA':
-                # Convert backend topology metadata to ReactFlow node
+                col = len(nodes) % 5
+                row = len(nodes) // 5
                 nodes.append({
                     "id": item['nodeId'],
                     "type": "default",
-                    "data": {"label": item.get('resourceName', item['nodeId'])},
-                    "position": {"x": 250, "y": 250} # In a real app, use a layout engine like Dagre
+                    "data": {"label": item.get('label', item['nodeId'])},
+                    "position": {"x": 50 + col * 200, "y": 80 + row * 150}
                 })
             else:
-                # Convert edge
                 edges.append({
                     "id": f"e-{item['nodeId']}-{item['edgeTypeTarget']}",
                     "source": item['nodeId'],
-                    "target": item['edgeTypeTarget'],
+                    "target": item.get('targetNodeId', item['edgeTypeTarget']),
                     "animated": True
                 })
         
@@ -132,6 +146,16 @@ async def action_approval(approval_id: str, payload: dict):
         return {"status": "success", "approvalId": approval_id, "newStatus": status}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/models/config")
+async def get_model_config():
+    return _model_config
+
+@app.patch("/api/models/config")
+async def update_model_config(payload: ModelConfigPayload):
+    _model_config.update(payload.model_dump(exclude_none=True))
+    logger.info(f"Model config updated: {_model_config}")
+    return {"status": "saved", "config": _model_config}
 
 @app.get("/api/agents/status")
 async def get_agents_status():

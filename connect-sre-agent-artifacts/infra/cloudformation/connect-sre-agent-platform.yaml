@@ -1050,6 +1050,7 @@ Resources:
           INCIDENT_DIGEST_TABLE_NAME: !Ref IncidentDigestTable
           EVIDENCE_BUCKET_NAME: !Ref EvidenceBucket
           CONNECT_SRE_EVENT_BUS_NAME: !Ref ConnectSreEventBus
+          TOPOLOGY_REFRESH_QUEUE_URL: !Ref TopologyRefreshQueue
       Code:
         ZipFile: |
           import json
@@ -1111,6 +1112,14 @@ Resources:
               # MVP supports notify/ticket/diagnostic workflows, not direct Connect mutation.
               print(json.dumps({"message": "connect action dispatcher placeholder", "event": event}))
               return {"ok": True, "placeholder": True, "executed": False}
+
+  TopologyRefreshEventSourceMapping:
+    Type: AWS::Lambda::EventSourceMapping
+    Properties:
+      EventSourceArn: !GetAtt TopologyRefreshQueue.Arn
+      FunctionName: !GetAtt TopologyScannerFunction.Arn
+      BatchSize: 1
+      Enabled: true
 
   CloudWatchAlarmRule:
     Type: AWS::Events::Rule

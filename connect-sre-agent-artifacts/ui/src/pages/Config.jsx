@@ -4,6 +4,21 @@ import { Shield, Cpu } from 'lucide-react';
 const Config = () => {
   const [agentMode, setAgentMode] = useState('recommend_only');
   const [primaryModel, setPrimaryModel] = useState('gemini-1.5-pro');
+  const [fallbackModel, setFallbackModel] = useState('claude-3-sonnet');
+  const [saveStatus, setSaveStatus] = useState(null);
+
+  const handleSave = () => {
+    setSaveStatus('saving');
+    fetch('/api/models/config', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ agentMode, primaryModel, fallbackModel }),
+    })
+      .then(res => res.json())
+      .then(() => setSaveStatus('saved'))
+      .catch(() => setSaveStatus('error'))
+      .finally(() => setTimeout(() => setSaveStatus(null), 3000));
+  };
 
   return (
     <div style={{ padding: '1rem', height: '100%', overflowY: 'auto' }}>
@@ -63,16 +78,22 @@ const Config = () => {
             
             <div>
               <label style={{ display: 'block', fontSize: '0.85rem', marginBottom: '0.5rem', fontWeight: 600 }}>Fallback Model</label>
-              <select 
+              <select
+                value={fallbackModel}
+                onChange={(e) => setFallbackModel(e.target.value)}
                 style={{ width: '100%', padding: '0.75rem', borderRadius: '8px', background: 'rgba(255,255,255,0.02)', border: '1px solid var(--border-glass)', color: 'white' }}
               >
-                <option>Claude 3 Sonnet (Bedrock)</option>
-                <option>Gemini 1.5 Flash</option>
+                <option value="claude-3-sonnet">Claude 3 Sonnet (Bedrock)</option>
+                <option value="gemini-1.5-flash">Gemini 1.5 Flash</option>
               </select>
             </div>
 
-            <button style={{ marginTop: 'auto', padding: '0.75rem', background: 'var(--accent-blue)', color: 'white', border: 'none', borderRadius: '8px', fontWeight: 600, cursor: 'pointer' }}>
-              Save Configuration
+            <button
+              onClick={handleSave}
+              disabled={saveStatus === 'saving'}
+              style={{ marginTop: 'auto', padding: '0.75rem', background: saveStatus === 'error' ? 'var(--status-critical)' : 'var(--accent-blue)', color: 'white', border: 'none', borderRadius: '8px', fontWeight: 600, cursor: saveStatus === 'saving' ? 'not-allowed' : 'pointer', opacity: saveStatus === 'saving' ? 0.7 : 1 }}
+            >
+              {saveStatus === 'saving' ? 'Saving...' : saveStatus === 'saved' ? 'Saved!' : saveStatus === 'error' ? 'Error — retry' : 'Save Configuration'}
             </button>
           </div>
         </div>
