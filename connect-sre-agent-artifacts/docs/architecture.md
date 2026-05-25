@@ -20,3 +20,15 @@ The infrastructure uses a VPC with Public subnets to avoid NAT Gateway charges w
   - `dev-connect-sre-topology`: Real-time mapped dependency graph of the Connect instance.
   - `dev-connect-sre-incidents`: Historical records of alarms and configurations.
   - `dev-connect-sre-approvals`: Pending/Completed LLM actions requiring human sign-off.
+
+## Enterprise Portability (Fallback Architectures)
+Because the AWS Control Plane (EventBridge, Lambda, DynamoDB) strictly isolates the state and execution layer from the LLM reasoning layer, this architecture avoids vendor lock-in. 
+
+If corporate policy ever restricts the use of the Google Antigravity SDK or custom Docker containers, the orchestration layer can be cleanly swapped:
+
+### Fallback: Amazon Bedrock Agents
+For strict Landing Zones requiring all data to remain within the AWS perimeter:
+- The ECS Fargate cluster and FastAPI app can be deleted.
+- A managed **Amazon Bedrock Agent** is provisioned to act as the Supervisor.
+- The custom tools (`query_topology`, `fetch_runbook`, etc.) are wrapped in AWS Lambda functions and attached to the Bedrock Agent as "Action Groups".
+- Bedrock's native Multi-Agent Collaboration feature is used to replicate the dynamic sub-agent orchestration.
