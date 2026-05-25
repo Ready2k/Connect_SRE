@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import ReactFlow, { Background, Controls } from 'reactflow';
 import 'reactflow/dist/style.css';
-import { Bot, Activity, BrainCircuit } from 'lucide-react';
+import { Bot, Activity, BrainCircuit, Settings, Save } from 'lucide-react';
 
 const initialNodes = [
   { id: 'supervisor', type: 'default', position: { x: 350, y: 50 }, data: { label: 'Connect Supervisor Agent' }, style: { background: 'var(--bg-secondary)', color: 'var(--text-primary)', border: '2px solid var(--accent-cyan)', borderRadius: '8px', padding: '10px 20px', fontWeight: 'bold' } },
@@ -18,6 +18,8 @@ const Agents = () => {
   const [agentDetails, setAgentDetails] = useState(null);
   const [selectedAgent, setSelectedAgent] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [config, setConfig] = useState({ logGroupName: '', defaultTimeWindowMinutes: 60 });
+  const [savingConfig, setSavingConfig] = useState(false);
 
   useEffect(() => {
     fetch('/api/agents/status')
@@ -37,12 +39,38 @@ const Agents = () => {
         console.error("Failed to fetch agent status", err);
         setLoading(false);
       });
+
+    fetch('/api/agents/config')
+      .then(res => res.json())
+      .then(data => {
+        if (!data.error) {
+          setConfig(data);
+        }
+      })
+      .catch(err => console.error("Failed to fetch agent config", err));
   }, []);
 
   const onNodeClick = (event, node) => {
     if (agentDetails) {
       setSelectedAgent(agentDetails[node.id] || agentDetails['supervisor']);
     }
+  };
+
+  const handleSaveConfig = async () => {
+    setSavingConfig(true);
+    try {
+      await fetch('/api/agents/config', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          logGroupName: config.logGroupName,
+          defaultTimeWindowMinutes: parseInt(config.defaultTimeWindowMinutes, 10) || 60
+        })
+      });
+    } catch (e) {
+      console.error(e);
+    }
+    setSavingConfig(false);
   };
 
   if (loading) return <div style={{ padding: '2rem' }}>Loading agent telemetry...</div>;
@@ -102,6 +130,45 @@ const Agents = () => {
             </div>
           </div>
         )}
+
+        {/* Configuration Panel */}
+        <div style={{ marginTop: '2rem', borderTop: '1px solid var(--border-glass)', paddingTop: '1.5rem' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '1rem' }}>
+            <Settings size={18} color="var(--text-secondary)" />
+            <h3 style={{ fontSize: '1.1rem', fontWeight: 600 }}>Observability Tools Config</h3>
+          </div>
+          
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+            <div>
+              <label style={{ display: 'block', fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: '0.3rem' }}>CloudWatch Log Group Name</label>
+              <input 
+                type="text" 
+                value={config.logGroupName} 
+                onChange={(e) => setConfig({...config, logGroupName: e.target.value})}
+                placeholder="/aws/connect/instance-id"
+                style={{ width: '100%', padding: '0.5rem', borderRadius: '4px', border: '1px solid var(--border-glass)', background: 'rgba(0,0,0,0.2)', color: 'white' }}
+              />
+            </div>
+            <div>
+              <label style={{ display: 'block', fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: '0.3rem' }}>Default Search Window (Minutes)</label>
+              <input 
+                type="number" 
+                value={config.defaultTimeWindowMinutes} 
+                onChange={(e) => setConfig({...config, defaultTimeWindowMinutes: e.target.value})}
+                style={{ width: '100%', padding: '0.5rem', borderRadius: '4px', border: '1px solid var(--border-glass)', background: 'rgba(0,0,0,0.2)', color: 'white' }}
+              />
+            </div>
+            <button 
+              onClick={handleSaveConfig}
+              disabled={savingConfig}
+              style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.5rem', background: 'var(--accent-cyan)', color: 'black', padding: '0.5rem', borderRadius: '4px', border: 'none', cursor: 'pointer', fontWeight: 600, marginTop: '0.5rem' }}
+            >
+              <Save size={16} />
+              {savingConfig ? 'Saving...' : 'Save Configuration'}
+            </button>
+          </div>
+        </div>
+
       </div>
     </div>
   );

@@ -234,3 +234,125 @@ def propose_remediation(action_type: str, params: dict, incident_id: str, justif
             }
     except Exception as e:
         return {"status": "error", "message": str(e)}
+
+def _get_agent_config() -> dict:
+    try:
+        table = DYNAMODB.Table(POLICY_TABLE_NAME)
+        response = table.get_item(Key={'policyName': 'AgentToolConfig'})
+        if 'Item' in response:
+            return response['Item'].get('config', {})
+    except Exception:
+        pass
+    return {"logGroupName": "/aws/connect/default", "defaultTimeWindowMinutes": 60}
+
+def query_connect_metrics(instance_id: str, resource_id: str, start_minutes_ago: int = None) -> dict:
+    """
+    Query historical Amazon Connect metrics (e.g., ContactFlowFatalErrors, ContactFlowErrors).
+    
+    Args:
+        instance_id (str): The Amazon Connect instance ID.
+        resource_id (str): The specific flow or queue ID to query.
+        start_minutes_ago (int): Minutes ago to start the query (defaults to GUI configuration).
+    """
+    config = _get_agent_config()
+    window = start_minutes_ago or int(config.get("defaultTimeWindowMinutes", 60))
+    
+    import datetime
+    now = datetime.datetime.utcnow()
+    start_time = now - datetime.timedelta(minutes=window)
+    
+    # Simple heuristic to determine ResourceType
+    resource_type = "QUEUE" if "queue" in resource_id.lower() else "CONTACT_FLOW"
+    clean_resource_id = resource_id.split(":")[-1] if ":" in resource_id else resource_id
+    
+    try:
+        connect_client = boto3.client("connect", region_name=os.environ.get("AWS_REGION", "us-west-2"))
+        
+        metrics = [
+            {"Name": "CONTACT_FLOW_FATAL_ERROR"},
+            {"Name": "CONTACT_FLOW_ERROR"}
+        ] if resource_type == "CONTACT_FLOW" else [
+            {"Name": "QUEUE_SIZE"} # Simple metric for queues
+        ]
+        
+        response = connect_client.get_metric_data_v2(
+            ResourceArn=f"arn:aws:connect:{os.environ.get('AWS_REGION', 'us-west-2')}:{boto3.client('sts').get_caller_identity()['Account']}:instance/{instance_id}/{resource_type.lower()}/{clean_resource_id}",
+            StartTime=start_time,
+            EndTime=now,
+            Filters=[
+                {
+                    "FilterKey": f"{resource_type}",
+                    "FilterValues": [f"arn:aws:connect:{os.environ.get('AWS_REGION', 'us-west-2')}:{boto3.client('sts').get_caller_identity()['Account']}:instance/{instance_id}/{resource_type.lower()}/{clean_resource_id}"]
+                }
+            ],
+            Metrics=metrics
+        )
+        return {
+            "status": "success",
+            "metrics": response.get("MetricResults", [])
+        }
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
+def query_cloudwatch_flow_logs(instance_id: str, flow_id: str, start_minutes_ago: int = None) -> dict:
+    """
+    Execute a CloudWatch Logs Insights query to find actual error messages and context 
+    for a specific contact flow.
+    
+    Args:
+        instance_id (str): The Amazon Connect instance ID.
+        flow_id (str): The specific contact flow ID (clean ID without 'flow:').
+        start_minutes_ago (int): Minutes ago to start the query (defaults to GUI configuration).
+    """
+    import datetime
+    import time
+    
+    config = _get_agent_config()
+    window = start_minutes_ago or int(config.get("defaultTimeWindowMinutes", 60))
+    log_group_name = config.get("logGroupName", f"/aws/connect/{instance_id}")
+    
+    now = datetime.datetime.utcnow()
+    start_time = int((now - datetime.timedelta(minutes=window)).timestamp())
+    end_time = int(now.timestamp())
+    
+    clean_flow_id = flow_id.split(":")[-1] if ":" in flow_id else flow_id
+    logs_client = boto3.client("logs", region_name=os.environ.get("AWS_REGION", "us-west-2"))
+    
+    # 1. Check if the log group actually exists. If it doesn't, we return the diagnostic signal!
+    try:
+        logs_client.describe_log_streams(logGroupName=log_group_name, limit=1)
+    except logs_client.exceptions.ResourceNotFoundException:
+        return {
+            "status": "log_group_missing",
+            "diagnosticSignal": True,
+            "message": f"The CloudWatch Log Group '{log_group_name}' does not exist.",
+            "recommendation": "The flow is failing silently because logging is disabled. Enable the 'Set logging behavior' block for this flow to diagnose the root cause."
+        }
+    except Exception as e:
+        # Ignore other errors for now and try to run the query
+        pass
+
+    # 2. Run the Insights query
+    try:
+        query = f"fields @timestamp, @message | filter ContactFlowId = '{clean_flow_id}' and Level = 'ERROR' | sort @timestamp desc | limit 20"
+        start_resp = logs_client.start_query(
+            logGroupName=log_group_name,
+            startTime=start_time,
+            endTime=end_time,
+            queryString=query
+        )
+        query_id = start_resp['queryId']
+        
+        # 3. Poll for results
+        for _ in range(10):
+            res = logs_client.get_query_results(queryId=query_id)
+            if res['status'] == 'Complete':
+                return {
+                    "status": "success",
+                    "logs": res.get("results", [])
+                }
+            time.sleep(1)
+            
+        return {"status": "timeout", "message": "The Logs Insights query timed out."}
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
