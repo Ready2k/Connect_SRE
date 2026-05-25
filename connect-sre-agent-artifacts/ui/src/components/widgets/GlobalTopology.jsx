@@ -1,4 +1,3 @@
-import React from 'react';
 import ReactFlow, { Background } from 'reactflow';
 import 'reactflow/dist/style.css';
 

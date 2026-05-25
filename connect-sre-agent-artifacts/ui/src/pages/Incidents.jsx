@@ -1,5 +1,5 @@
-import React, { useState } from 'react';
-import { AlertTriangle, Clock, Eye, Activity } from 'lucide-react';
+import { useState } from 'react';
+import { Clock, Eye, Activity } from 'lucide-react';
 
 const incidentData = [
   { id: 'INC-2023-01', severity: 'SEV1', component: 'us-west-2/ccp', title: 'High latency in CCP endpoints', time: '10 mins ago', status: 'Investigating' },

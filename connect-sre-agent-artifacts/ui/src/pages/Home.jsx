@@ -1,4 +1,3 @@
-import React from 'react';
 import SREOverview from '../components/widgets/SREOverview';
 import SystemHealth from '../components/widgets/SystemHealth';
 import GlobalTopology from '../components/widgets/GlobalTopology';

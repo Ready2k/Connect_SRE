@@ -1,4 +1,3 @@
-import React from 'react';
 
 const approvals = [
   { action: 'Reset CCP Nodes', trigger: 'us-west-2', requestor: 'Sarah Jenkins', type: 'Approve' },

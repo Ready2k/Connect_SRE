@@ -1,4 +1,3 @@
-import React from 'react';
 import QueueMetrics from '../components/widgets/QueueMetrics';
 import QueuesChart from '../components/widgets/QueuesChart';
 import SystemHealth from '../components/widgets/SystemHealth';

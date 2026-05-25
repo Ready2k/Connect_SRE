@@ -1,4 +1,3 @@
-import React from 'react';
 import GlobalTopology from '../components/widgets/GlobalTopology';
 
 const Topology = () => {

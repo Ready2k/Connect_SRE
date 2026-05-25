@@ -1,5 +1,5 @@
-import React, { useState } from 'react';
-import { Settings, Shield, Cpu } from 'lucide-react';
+import { useState } from 'react';
+import { Shield, Cpu } from 'lucide-react';
 
 const Config = () => {
   const [agentMode, setAgentMode] = useState('recommend_only');

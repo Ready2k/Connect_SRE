@@ -1,4 +1,3 @@
-import React from 'react';
 import PendingApprovals from '../components/widgets/PendingApprovals';
 
 const Approvals = () => {
