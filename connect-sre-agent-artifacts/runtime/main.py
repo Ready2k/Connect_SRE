@@ -296,6 +296,27 @@ async def update_incident_status(incident_id: str, body: dict, mode: str = Query
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@app.post("/api/incidents/dismiss-all")
+async def dismiss_all_incidents(mode: str = Query("demo")):
+    if mode == "demo":
+        return {"status": "success", "dismissed": 0}
+    try:
+        table = dynamodb.Table(INCIDENT_TABLE)
+        response = table.scan(ProjectionExpression="incidentId")
+        items = response.get("Items", [])
+        with table.batch_writer() as batch:
+            for item in items:
+                table.update_item(
+                    Key={"incidentId": item["incidentId"]},
+                    UpdateExpression="SET #s = :s",
+                    ExpressionAttributeNames={"#s": "status"},
+                    ExpressionAttributeValues={":s": "Dismissed"},
+                )
+        return {"status": "success", "dismissed": len(items)}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @app.get("/api/incidents/{incident_id}/traces")
 async def get_incident_traces(incident_id: str, mode: str = Query("demo")):
     if mode == "demo":

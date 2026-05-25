@@ -11,6 +11,7 @@ const Incidents = () => {
   const [loading, setLoading] = useState(true);
   const [triggering, setTriggering] = useState(false);
   const [dismissing, setDismissing] = useState(false);
+  const [clearingAll, setClearingAll] = useState(false);
 
   const ACTIVE_STATUSES = new Set(['Investigating', 'Open', 'Pending', 'Triggered', 'Escalated', 'Failed', 'Failed - Rate Limited']);
 
@@ -105,6 +106,22 @@ const Incidents = () => {
     });
   };
 
+  const handleClearAll = () => {
+    if (!window.confirm(`Clear all ${incidents.length} incident(s)? This marks them all as Dismissed in DynamoDB.`)) return;
+    setClearingAll(true);
+    fetch(`/api/incidents/dismiss-all?mode=${mode}`, { method: 'POST' })
+      .then(res => res.json())
+      .then(() => {
+        setIncidents([]);
+        setSelected(null);
+        setClearingAll(false);
+      })
+      .catch(err => {
+        alert("Network error: " + err);
+        setClearingAll(false);
+      });
+  };
+
   const fetchTraces = (incidentId) => {
     fetch(`/api/incidents/${incidentId}/traces?mode=${mode}`)
       .then(res => res.json())
@@ -132,7 +149,17 @@ const Incidents = () => {
     <div style={{ display: 'flex', gap: '1.5rem', height: '100%', padding: '1rem' }}>
       {/* List Panel */}
       <div className="glass-panel" style={{ flex: 1, display: 'flex', flexDirection: 'column' }}>
-        <h2 style={{ marginBottom: '1.5rem', fontSize: '1.2rem', fontWeight: 600 }}>Active Incidents</h2>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem' }}>
+          <h2 style={{ fontSize: '1.2rem', fontWeight: 600 }}>Active Incidents</h2>
+          {incidents.length > 0 && (
+            <button
+              onClick={handleClearAll}
+              disabled={clearingAll}
+              style={{ padding: '0.3rem 0.75rem', background: 'transparent', color: 'var(--status-critical)', border: '1px solid var(--status-critical)', borderRadius: '4px', cursor: 'pointer', fontSize: '0.75rem', fontWeight: 600, opacity: clearingAll ? 0.5 : 1 }}>
+              {clearingAll ? "Clearing..." : "Clear All"}
+            </button>
+          )}
+        </div>
         <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem', overflowY: 'auto' }}>
           {incidents.map(inc => (
             <div 
