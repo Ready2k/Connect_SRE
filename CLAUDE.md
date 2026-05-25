@@ -4,42 +4,57 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Connect SRE Agent — a domain-specific SRE platform for Amazon Connect. It detects contact flow regressions, correlates infrastructure changes to incidents, calculates blast radius, and recommends (or dispatches) safe remediation actions. MVP is **read-only by default**; autonomous actions are disabled behind feature flags.
+Connect SRE Agent — a domain-specific SRE platform for Amazon Connect. It detects contact flow regressions, correlates infrastructure changes to incidents, calculates blast radius, and recommends safe remediation actions. MVP is **read-only by default**; autonomous actions are disabled behind feature flags.
 
-All code lives under `connect-sre-agent-artifacts/`.
+All code lives under `connect-sre-agent-artifacts/`. AWS profile for all infrastructure operations is `connect-sre-dev` (us-west-2). The runtime container uses `connect-sre-runtime`.
 
 ## Commands
+
+### Runtime (Docker)
+
+```bash
+cd connect-sre-agent-artifacts
+
+# Build the image (run from connect-sre-agent-artifacts/ — the Dockerfile is in runtime/)
+docker build -t connect-sre-agent-runtime:latest -f runtime/Dockerfile .
+
+# Start with interactive provider selection (Gemini or Bedrock)
+./start.sh
+
+# Stop
+./stop.sh
+```
+
+`start.sh` prompts for provider choice:
+- **Gemini** — asks for `GEMINI_API_KEY`, sets `MODEL_PROVIDER=gemini`
+- **Bedrock** — uses the mounted `~/.aws` profile, sets `MODEL_PROVIDER=bedrock` + `BEDROCK_MODEL_ID`
 
 ### UI (React + Vite)
 
 ```bash
 cd connect-sre-agent-artifacts/ui
 npm install
-npm run dev      # Vite dev server → http://localhost:5173
-npm run build    # Production build → dist/
-npm run lint     # ESLint (no test runner configured yet)
-npm run preview  # Serve production build locally
+npm run dev      # Vite dev server → http://localhost:5173 (proxies /api/* to :8000)
+npm run build    # Production build → dist/  (built into Docker image)
+npm run lint
 ```
 
-### Infrastructure
+### Lambda deploy & test scripts
+
+All scripts require `--profile connect-sre-dev` (already embedded). Run from repo root:
 
 ```bash
-# Deploy or update the CloudFormation stack
-aws cloudformation deploy \
-  --template-file connect-sre-agent-artifacts/infra/cloudformation/connect-sre-agent-platform.yaml \
-  --stack-name dev-connect-sre-platform \
-  --parameter-overrides EnvironmentName=dev DefaultModelProvider=bedrock \
-  --capabilities CAPABILITY_NAMED_IAM
-
-# Update your developer IP in the admin security group (run from repo root)
-./connect-sre-agent-artifacts/infra/scripts/update_dev_ip.sh
+./connect-sre-agent-artifacts/infra/scripts/deploy_normalizer.sh
+./connect-sre-agent-artifacts/infra/scripts/deploy_topology_scanner.sh
+./connect-sre-agent-artifacts/infra/scripts/test_normalizer.sh       # fires synthetic CloudWatch alarm
+./connect-sre-agent-artifacts/infra/scripts/test_topology_scanner.sh # triggers full scan
+./connect-sre-agent-artifacts/infra/scripts/update_dev_ip.sh         # update security group with current public IP
 ```
 
 ### Lambda functions (local execution)
 
 ```bash
 cd connect-sre-agent-artifacts/infra/src
-# Set required env vars then invoke directly:
 TOPOLOGY_TABLE_NAME=dev-connect-sre-topology \
 CONNECT_INSTANCE_IDS=<id1>,<id2> \
 python topology_scanner.py
@@ -47,70 +62,108 @@ python topology_scanner.py
 # Same pattern for normalizer.py, action_dispatcher.py, seed_topology.py
 ```
 
+### CloudFormation
+
+```bash
+aws cloudformation deploy \
+  --template-file connect-sre-agent-artifacts/infra/cloudformation/connect-sre-agent-platform.yaml \
+  --stack-name dev-connect-sre-platform \
+  --parameter-overrides EnvironmentName=dev AllowedAdminCIDR=<your-ip>/32 \
+  --capabilities CAPABILITY_NAMED_IAM \
+  --profile connect-sre-dev
+```
+
 ## Architecture
+
+### End-to-end incident flow
+
+1. **EventBridge** captures CloudWatch Alarms, Connect flow logs, CloudTrail mutations
+2. **`normalizer.py`** Lambda normalises the event → DynamoDB incident record → POSTs to FastAPI `/api/incidents`
+3. **FastAPI** (`runtime/main.py`) accepts the POST and runs `investigate_incident_background()` as a background task
+4. **Supervisor Agent** (`runtime/agent.py` → provider path) picks up tools, queries DynamoDB/S3/CloudWatch, writes an approval record via `propose_remediation`
+5. **Operator** reviews and approves in the UI (`/approvals`)
+6. **`action_dispatcher.py`** Lambda enforces policy gates then executes the remediation
+
+### Multi-agent runtime — two provider paths
+
+`runtime/agent.py` reads `MODEL_PROVIDER` at import time and returns the correct async context manager. `main.py` calls `async with get_supervisor_agent() as s: await s.chat(prompt)`.
+
+| | Google ADK (Gemini) | AWS Strands (Bedrock) |
+|---|---|---|
+| `MODEL_PROVIDER` | `gemini` (default) | `bedrock` |
+| Entry point | `_get_gemini_agent()` → `google.antigravity.Agent` | `_BedrockSupervisor.__aenter__()` |
+| Specialist wiring | `enable_subagents=True` — ADK spawns dynamically | `agents_bedrock.build_strands_supervisor(model)` |
+| System prompt | `SUPERVISOR_SYSTEM_INSTRUCTION` | `SUPERVISOR_STRANDS_INSTRUCTION` |
+| Model default | `gemini-3.5-flash` | `us.anthropic.claude-sonnet-4-6` |
+
+**Strands multi-agent (`agents_bedrock.py`):** `build_strands_supervisor(model)` creates 10 specialist `Agent` instances as closures, wraps each with Strands `@tool`, and passes them all to the supervisor. Only the supervisor receives `propose_remediation` — specialists are read-only. Strands is synchronous; `_BedrockSupervisor.chat()` runs it in a thread-pool executor so FastAPI's event loop is never blocked.
+
+### The 10 specialist agents
+
+FLOW · MODULE · QUEUE · LEXA · AIA · CHANGE · IMPACT · RUNBOOK · RISK · VERIFY
+
+Each specialist is scoped to a subset of tools. Full system prompts are in `runtime/prompts.py`. Tool implementations are in `runtime/tools.py` — plain Python functions with type hints and docstrings (compatible with both ADK and Strands without modification).
+
+### FastAPI backend (`runtime/main.py`)
+
+Live backend serving the UI. Key endpoints:
+
+| Endpoint | Notes |
+|---|---|
+| `POST /api/incidents` | Queues agent investigation as background task |
+| `GET /api/incidents`, `GET /api/incidents/{id}/traces` | Reads DynamoDB |
+| `GET /api/topology?mode=demo\|live&instanceId=` | Demo: DynamoDB scan. Live: Connect API |
+| `GET /api/monitoring/metrics?mode=demo\|live&instanceId=` | Demo: derived from incidents. Live: Connect real-time metrics |
+| `GET /api/agents/status` | Returns active model label + mock agent swarm state |
+| `GET/PATCH /api/models/config` | In-memory model config (reflects `_ACTIVE_MODEL_LABEL` from env) |
+| `GET /api/approvals`, `POST /api/approvals/{id}/action` | Approval state machine |
+
+`_ACTIVE_MODEL_LABEL` is derived at startup from `MODEL_PROVIDER` + `BEDROCK_MODEL_ID` env vars and flows into traces, agent status responses, and the default model config.
 
 ### Frontend (`ui/`)
 
-Single-page React 19 app with React Router 7. Routes:
+Single-page React 19 app (React Router 7). Vite proxies `/api/*` → `http://127.0.0.1:8000`. Styling is vanilla CSS with CSS variables — no CSS framework. Key libraries: `reactflow` (topology), Recharts (metrics), Lucide React (icons).
 
-| Route | Purpose |
-|---|---|
-| `/` | Overview dashboard |
-| `/incidents` | Incident browser |
-| `/agents` | Agent management |
-| `/monitoring` | Real-time metrics |
-| `/topology` | Interactive React Flow graph of Connect resources |
-| `/approvals` | Pending action approvals |
-| `/config` | Model router + policy configuration |
-| `/logs` | Audit trail |
+Notable pages: `/config` loads active model config from `/api/models/config` on mount and shows an active provider banner. `/topology` supports `?mode=live&instanceId=` to fetch real Connect data. `/monitoring` same live/demo toggle.
 
-Key libraries: `reactflow` (topology graph), Recharts (metrics charts), Lucide React (icons). Styling is vanilla CSS with CSS variables — no CSS framework.
-
-**API integration:** Several components make `fetch` calls to `/api/*` endpoints. Vite proxies these to `http://127.0.0.1:8000` during development (`vite.config.js`). The backend API server at port 8000 is **not yet implemented** in this repo — components that call it (`Incidents`, `Agents`, `Topology`, `PendingApprovals`) will fall back to their error/loading states without it. Endpoints expected:
-- `GET /api/incidents`
-- `GET /api/agents/status`
-- `GET /api/topology`
-- `GET /api/approvals`
-- `POST /api/approvals/{id}/action`
-
-### Backend Lambda functions (`infra/src/`)
+### Lambda functions (`infra/src/`)
 
 | File | Trigger | Role |
 |---|---|---|
-| `topology_scanner.py` | EventBridge schedule + SQS partial refresh | Crawls Connect APIs (flows, modules, queues, routing profiles, agents, Lex bots) and writes an adjacency-list graph to DynamoDB |
-| `seed_topology.py` | One-shot bootstrap | Seeds business journey definitions and test topology data |
-| `normalizer.py` | Event-driven | Normalizes CloudWatch metrics, correlates changes to incidents, generates deterministic incident digests |
-| `action_dispatcher.py` | API/orchestrator call | Checks tool registry, policy gates, and approval state before executing any remediation; guards all writes |
+| `topology_scanner.py` | EventBridge schedule + SQS | Crawls Connect APIs, writes adjacency-list graph to DynamoDB. Auto-discovers instances if `CONNECT_INSTANCE_IDS` is empty. |
+| `normalizer.py` | EventBridge | Normalises events, deduplicates within `DEDUPE_WINDOW_MINUTES`, triggers topology refresh for mutations, POSTs to agent API |
+| `action_dispatcher.py` | API/orchestrator | Policy gates + approval check before any Connect write |
+| `seed_topology.py` | One-shot bootstrap | Seeds journey definitions and test topology data |
 
 ### Data model (DynamoDB)
 
-Four primary tables (names are CloudFormation parameters):
+- **Topology** (`dev-connect-sre-topology`) — adjacency-list: `nodeId` (PK) + `edgeTypeTarget` (SK). `edgeTypeTarget = "METADATA"` rows hold node attributes; edge rows use `"DEPENDS_ON#<target>"` / `"REQUIRED_BY#<target>"` prefixes for BFS traversal.
+- **Incidents** (`dev-connect-sre-incidents`) — GSI `by-connect-resource-createdAt` on `connectResourceId`.
+- **Approvals** (`dev-connect-sre-approvals`) — state machine: `PENDING` → `AUTO_APPROVED` / approved / rejected.
+- **Policy** (`dev-connect-sre-policy-config`) — active policies evaluated by `propose_remediation` at tool-call time, not at dispatch.
+- **Agent runs** (`dev-connect-sre-agent-runs`) — trace records written per agent invocation.
 
-- **Topology table** — adjacency-list pattern: `nodeId` (PK) + `edgeTypeTarget` (SK). Stores both node metadata and edges in the same table.
-- **Incidents table** — incident records with severity, trigger context, affected resources, and evidence.
-- **Approvals table** — approval state machine for action governance (pending → approved/rejected).
-- **Policy / Tool Registry tables** — what actions are allowed and under what conditions.
+### Infrastructure
 
-### Multi-agent design
+`infra/cloudformation/connect-sre-agent-platform.yaml` is the primary template (`sre-agent-platform.yaml` is a compatibility copy — keep in sync). CloudFormation manages VPC (public subnets, no NAT Gateway), ALB locked to `AllowedAdminCIDR`, ECS Fargate, Lambda IAM roles, DynamoDB tables (TTL: topology 180d, evidence 90d), EventBridge rules, SQS queues.
 
-The agent layer (Google ADK Python, not yet implemented in this repo) follows a **supervisor pattern**: a coordinator agent delegates to specialist agents (flow health, module dependency, queue routing, Lex bot health, AI agent/Q in Connect monitoring). The action_dispatcher enforces policy gates before any write reaches AWS.
-
-Model provider is pluggable: Bedrock, Gemini, OpenAI-compatible, or mock — set via the `DefaultModelProvider` CloudFormation parameter.
-
-### Feature flags
-
-Both are CloudFormation parameters defaulting to `false`:
-
-- `EnableConnectWriteActions` — allows the platform to modify Connect resources
+Feature flags (CloudFormation parameters, both default `false`):
+- `EnableConnectWriteActions` — allows modifying Connect resources
 - `EnableAutonomousActions` — allows changes without human approval
 
-### Infrastructure (`infra/cloudformation/`)
+### Current Bedrock model IDs (us-west-2)
 
-`connect-sre-agent-platform.yaml` is the parent template. `sre-agent-platform.yaml` is a compatibility copy — keep them in sync. CloudFormation manages VPC networking, security groups, Lambda IAM roles, DynamoDB tables, EventBridge rules, and SQS queues.
+us-west-2 has no In-Region support for Claude 4 models — use geo inference IDs:
+- `us.anthropic.claude-sonnet-4-6` — recommended default
+- `us.anthropic.claude-opus-4-7` — most capable
+- `anthropic.claude-haiku-4-5` — fastest/cheapest
 
-## Key constraints (from BUILDER_PROMPT.md and SPEC.md)
+Gemini: `gemini-3.5-flash` (GA, recommended), `gemini-2.5-pro`, `gemini-2.5-flash`
 
-- This platform is **Connect-specific**, not a generic AWS SRE tool — all detection and diagnosis logic must be grounded in Connect concepts (contact flows, modules, queues, routing profiles, Lex bots, Q in Connect).
-- The topology graph is the source of truth for blast-radius analysis; always read from DynamoDB, not from live Connect APIs during incident triage.
-- All remediation actions must pass through `action_dispatcher.py` policy gates — never call Connect write APIs directly from other functions.
-- Retention: topology snapshots 180 days, evidence 90 days (enforced by DynamoDB TTL set in CloudFormation).
+## Key constraints
+
+- **Connect-specific** — all detection and diagnosis must be grounded in Connect concepts (flows, modules, queues, routing profiles, Lex bots, Q in Connect). Not a generic AWS SRE tool.
+- **Topology graph is source of truth** during triage — read from DynamoDB, not live Connect APIs.
+- **All writes go through `action_dispatcher.py`** — never call Connect write APIs directly from other Lambdas or the agent tools.
+- **`propose_remediation` is supervisor-only** in the Strands path — specialist agents are intentionally read-only.
+- Adding a new specialist agent requires: a system prompt in `prompts.py`, an `Agent` instance + `@tool` wrapper in `agents_bedrock.py`, and a corresponding persona description update in `SUPERVISOR_STRANDS_INSTRUCTION`.
