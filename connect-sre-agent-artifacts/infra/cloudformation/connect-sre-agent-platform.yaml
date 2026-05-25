@@ -1,0 +1,1151 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >
+  Connect SRE Agent Platform - parent CloudFormation template.
+  Creates starter AWS infrastructure for an ADK-based, pluggable-model,
+  supervisor-pattern Amazon Connect reliability agent.
+
+Metadata:
+  Version: 0.2.0
+  Product: Connect SRE Agent
+  Notes: >
+    Starter parent template. The MVP is read-only for Connect configuration
+    changes. Write/remediation actions must be added later through explicit
+    tool registry, policy, approval, and action dispatcher controls.
+
+Parameters:
+  EnvironmentName:
+    Type: String
+    Default: dev
+    AllowedPattern: '^[a-zA-Z0-9-]+$'
+
+  AgentRuntimeImageUri:
+    Type: String
+    Default: placeholder.dkr.ecr.eu-west-2.amazonaws.com/connect-sre-agent-runtime:latest
+    Description: Container image URI for ADK runtime service.
+
+  ConnectInstanceIds:
+    Type: CommaDelimitedList
+    Default: ''
+    Description: Optional comma-separated Amazon Connect instance IDs to scan.
+
+  DefaultModelProvider:
+    Type: String
+    Default: bedrock
+    AllowedValues:
+      - bedrock
+      - gemini
+      - openai_compatible
+      - mock
+
+  DefaultModelId:
+    Type: String
+    Default: anthropic.claude-3-7-sonnet
+    Description: Default model ID used by the model router.
+
+  EnableConnectWriteActions:
+    Type: String
+    Default: 'false'
+    AllowedValues:
+      - 'true'
+      - 'false'
+
+  EnableAutonomousActions:
+    Type: String
+    Default: 'false'
+    AllowedValues:
+      - 'true'
+      - 'false'
+
+  RequireApprovalForMediumRisk:
+    Type: String
+    Default: 'true'
+    AllowedValues:
+      - 'true'
+      - 'false'
+
+  EvidenceRetentionDays:
+    Type: Number
+    Default: 90
+
+  TopologySnapshotRetentionDays:
+    Type: Number
+    Default: 180
+
+  AllowedAdminCIDR:
+    Type: String
+    Default: 0.0.0.0/0
+    Description: CIDR allowed to reach admin endpoints in MVP. Tighten outside demos.
+
+  NotificationWebhookSecretArn:
+    Type: String
+    Default: ''
+    Description: Optional Secrets Manager ARN for Slack/Teams webhook.
+
+Conditions:
+  HasNotificationWebhook: !Not [!Equals [!Ref NotificationWebhookSecretArn, '']]
+  ConnectWriteActionsEnabled: !Equals [!Ref EnableConnectWriteActions, 'true']
+  AutonomousActionsEnabled: !Equals [!Ref EnableAutonomousActions, 'true']
+
+Resources:
+  ConnectSreKmsKey:
+    Type: AWS::KMS::Key
+    Properties:
+      Description: !Sub '${EnvironmentName} Connect SRE Agent encryption key'
+      EnableKeyRotation: true
+      KeyPolicy:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: EnableRootPermissions
+            Effect: Allow
+            Principal:
+              AWS: !Sub 'arn:aws:iam::${AWS::AccountId}:root'
+            Action: 'kms:*'
+            Resource: '*'
+
+  ConnectSreKmsAlias:
+    Type: AWS::KMS::Alias
+    Properties:
+      AliasName: !Sub 'alias/${EnvironmentName}-connect-sre-agent'
+      TargetKeyId: !Ref ConnectSreKmsKey
+
+  ConnectSreEventBus:
+    Type: AWS::Events::EventBus
+    Properties:
+      Name: !Sub '${EnvironmentName}-connect-sre-agent-bus'
+
+  ConnectSreDlq:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Sub '${EnvironmentName}-connect-sre-agent-dlq'
+      KmsMasterKeyId: !Ref ConnectSreKmsKey
+      MessageRetentionPeriod: 1209600
+
+
+  TopologyRefreshQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Sub '${EnvironmentName}-connect-sre-topology-refresh'
+      KmsMasterKeyId: !Ref ConnectSreKmsKey
+      VisibilityTimeout: 360
+      MessageRetentionPeriod: 1209600
+
+  AgentTraceBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub '${EnvironmentName}-connect-sre-agent-traces-${AWS::AccountId}-${AWS::Region}'
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: aws:kms
+              KMSMasterKeyID: !Ref ConnectSreKmsKey
+      LifecycleConfiguration:
+        Rules:
+          - Id: ExpireAgentTraces
+            Status: Enabled
+            ExpirationInDays: 180
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+
+  EvidenceBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub '${EnvironmentName}-connect-sre-evidence-${AWS::AccountId}-${AWS::Region}'
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: aws:kms
+              KMSMasterKeyID: !Ref ConnectSreKmsKey
+      LifecycleConfiguration:
+        Rules:
+          - Id: ExpireEvidence
+            Status: Enabled
+            ExpirationInDays: !Ref EvidenceRetentionDays
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+
+  RunbookBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub '${EnvironmentName}-connect-sre-runbooks-${AWS::AccountId}-${AWS::Region}'
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: aws:kms
+              KMSMasterKeyID: !Ref ConnectSreKmsKey
+      VersioningConfiguration:
+        Status: Enabled
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+
+  TopologySnapshotBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub '${EnvironmentName}-connect-sre-topology-${AWS::AccountId}-${AWS::Region}'
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: aws:kms
+              KMSMasterKeyID: !Ref ConnectSreKmsKey
+      LifecycleConfiguration:
+        Rules:
+          - Id: ExpireTopologySnapshots
+            Status: Enabled
+            ExpirationInDays: !Ref TopologySnapshotRetentionDays
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+
+  IncidentTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub '${EnvironmentName}-connect-sre-incidents'
+      BillingMode: PAY_PER_REQUEST
+      SSESpecification:
+        SSEEnabled: true
+        KMSMasterKeyId: !Ref ConnectSreKmsKey
+        SSEType: KMS
+      AttributeDefinitions:
+        - AttributeName: incidentId
+          AttributeType: S
+        - AttributeName: status
+          AttributeType: S
+        - AttributeName: updatedAt
+          AttributeType: S
+        - AttributeName: dedupeKey
+          AttributeType: S
+        - AttributeName: connectResourceId
+          AttributeType: S
+        - AttributeName: createdAt
+          AttributeType: S
+      KeySchema:
+        - AttributeName: incidentId
+          KeyType: HASH
+      GlobalSecondaryIndexes:
+        - IndexName: by-status-updatedAt
+          KeySchema:
+            - AttributeName: status
+              KeyType: HASH
+            - AttributeName: updatedAt
+              KeyType: RANGE
+          Projection:
+            ProjectionType: ALL
+        - IndexName: by-dedupe-createdAt
+          KeySchema:
+            - AttributeName: dedupeKey
+              KeyType: HASH
+            - AttributeName: createdAt
+              KeyType: RANGE
+          Projection:
+            ProjectionType: ALL
+        - IndexName: by-connect-resource-createdAt
+          KeySchema:
+            - AttributeName: connectResourceId
+              KeyType: HASH
+            - AttributeName: createdAt
+              KeyType: RANGE
+          Projection:
+            ProjectionType: ALL
+
+  ApprovalTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub '${EnvironmentName}-connect-sre-approvals'
+      BillingMode: PAY_PER_REQUEST
+      SSESpecification:
+        SSEEnabled: true
+        KMSMasterKeyId: !Ref ConnectSreKmsKey
+        SSEType: KMS
+      AttributeDefinitions:
+        - AttributeName: approvalId
+          AttributeType: S
+        - AttributeName: status
+          AttributeType: S
+        - AttributeName: createdAt
+          AttributeType: S
+      KeySchema:
+        - AttributeName: approvalId
+          KeyType: HASH
+      GlobalSecondaryIndexes:
+        - IndexName: by-status-createdAt
+          KeySchema:
+            - AttributeName: status
+              KeyType: HASH
+            - AttributeName: createdAt
+              KeyType: RANGE
+          Projection:
+            ProjectionType: ALL
+
+  AgentRunTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub '${EnvironmentName}-connect-sre-agent-runs'
+      BillingMode: PAY_PER_REQUEST
+      SSESpecification:
+        SSEEnabled: true
+        KMSMasterKeyId: !Ref ConnectSreKmsKey
+        SSEType: KMS
+      AttributeDefinitions:
+        - AttributeName: runId
+          AttributeType: S
+        - AttributeName: incidentId
+          AttributeType: S
+        - AttributeName: startedAt
+          AttributeType: S
+      KeySchema:
+        - AttributeName: runId
+          KeyType: HASH
+      GlobalSecondaryIndexes:
+        - IndexName: by-incident-startedAt
+          KeySchema:
+            - AttributeName: incidentId
+              KeyType: HASH
+            - AttributeName: startedAt
+              KeyType: RANGE
+          Projection:
+            ProjectionType: ALL
+
+  PolicyConfigTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub '${EnvironmentName}-connect-sre-policy-config'
+      BillingMode: PAY_PER_REQUEST
+      SSESpecification:
+        SSEEnabled: true
+        KMSMasterKeyId: !Ref ConnectSreKmsKey
+        SSEType: KMS
+      AttributeDefinitions:
+        - AttributeName: policyId
+          AttributeType: S
+      KeySchema:
+        - AttributeName: policyId
+          KeyType: HASH
+
+  ToolRegistryTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub '${EnvironmentName}-connect-sre-tool-registry'
+      BillingMode: PAY_PER_REQUEST
+      SSESpecification:
+        SSEEnabled: true
+        KMSMasterKeyId: !Ref ConnectSreKmsKey
+        SSEType: KMS
+      AttributeDefinitions:
+        - AttributeName: toolId
+          AttributeType: S
+      KeySchema:
+        - AttributeName: toolId
+          KeyType: HASH
+
+  ModelConfigTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub '${EnvironmentName}-connect-sre-model-config'
+      BillingMode: PAY_PER_REQUEST
+      SSESpecification:
+        SSEEnabled: true
+        KMSMasterKeyId: !Ref ConnectSreKmsKey
+        SSEType: KMS
+      AttributeDefinitions:
+        - AttributeName: configId
+          AttributeType: S
+      KeySchema:
+        - AttributeName: configId
+          KeyType: HASH
+
+  TopologyTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub '${EnvironmentName}-connect-sre-topology'
+      BillingMode: PAY_PER_REQUEST
+      SSESpecification:
+        SSEEnabled: true
+        KMSMasterKeyId: !Ref ConnectSreKmsKey
+        SSEType: KMS
+      AttributeDefinitions:
+        - AttributeName: nodeId
+          AttributeType: S
+        - AttributeName: edgeTypeTarget
+          AttributeType: S
+        - AttributeName: nodeType
+          AttributeType: S
+        - AttributeName: lastSeenAt
+          AttributeType: S
+      KeySchema:
+        - AttributeName: nodeId
+          KeyType: HASH
+        - AttributeName: edgeTypeTarget
+          KeyType: RANGE
+      GlobalSecondaryIndexes:
+        - IndexName: by-node-type-lastSeenAt
+          KeySchema:
+            - AttributeName: nodeType
+              KeyType: HASH
+            - AttributeName: lastSeenAt
+              KeyType: RANGE
+          Projection:
+            ProjectionType: ALL
+
+  JourneyTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub '${EnvironmentName}-connect-sre-journey-map'
+      BillingMode: PAY_PER_REQUEST
+      SSESpecification:
+        SSEEnabled: true
+        KMSMasterKeyId: !Ref ConnectSreKmsKey
+        SSEType: KMS
+      AttributeDefinitions:
+        - AttributeName: journeyId
+          AttributeType: S
+        - AttributeName: criticality
+          AttributeType: S
+      KeySchema:
+        - AttributeName: journeyId
+          KeyType: HASH
+      GlobalSecondaryIndexes:
+        - IndexName: by-criticality
+          KeySchema:
+            - AttributeName: criticality
+              KeyType: HASH
+          Projection:
+            ProjectionType: ALL
+
+
+  IncidentDigestTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub '${EnvironmentName}-connect-sre-incident-digests'
+      BillingMode: PAY_PER_REQUEST
+      SSESpecification:
+        SSEEnabled: true
+        KMSMasterKeyId: !Ref ConnectSreKmsKey
+        SSEType: KMS
+      AttributeDefinitions:
+        - AttributeName: incidentId
+          AttributeType: S
+        - AttributeName: digestVersion
+          AttributeType: S
+        - AttributeName: createdAt
+          AttributeType: S
+      KeySchema:
+        - AttributeName: incidentId
+          KeyType: HASH
+        - AttributeName: digestVersion
+          KeyType: RANGE
+      GlobalSecondaryIndexes:
+        - IndexName: by-createdAt
+          KeySchema:
+            - AttributeName: digestVersion
+              KeyType: HASH
+            - AttributeName: createdAt
+              KeyType: RANGE
+          Projection:
+            ProjectionType: ALL
+
+  NormalizerExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub '${EnvironmentName}-connect-sre-normalizer-role'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: normalizer-inline
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Sid: Logs
+                Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: '*'
+              - Sid: State
+                Effect: Allow
+                Action:
+                  - dynamodb:PutItem
+                  - dynamodb:UpdateItem
+                  - dynamodb:GetItem
+                  - dynamodb:Query
+                Resource:
+                  - !GetAtt IncidentTable.Arn
+                  - !Sub '${IncidentTable.Arn}/index/*'
+              - Sid: Evidence
+                Effect: Allow
+                Action:
+                  - s3:PutObject
+                Resource: !Sub '${EvidenceBucket.Arn}/*'
+              - Sid: TopologyRefreshRequests
+                Effect: Allow
+                Action:
+                  - sqs:SendMessage
+                Resource: !GetAtt TopologyRefreshQueue.Arn
+              - Sid: KmsUse
+                Effect: Allow
+                Action:
+                  - kms:Encrypt
+                  - kms:Decrypt
+                  - kms:GenerateDataKey
+                Resource: !GetAtt ConnectSreKmsKey.Arn
+
+  TopologyScannerRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub '${EnvironmentName}-connect-sre-topology-scanner-role'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: topology-scanner-inline
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Sid: Logs
+                Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: '*'
+              - Sid: ConnectRead
+                Effect: Allow
+                Action:
+                  - connect:ListInstances
+                  - connect:DescribeInstance
+                  - connect:ListContactFlows
+                  - connect:DescribeContactFlow
+                  - connect:ListContactFlowModules
+                  - connect:DescribeContactFlowModule
+                  - connect:ListQueues
+                  - connect:DescribeQueue
+                  - connect:ListRoutingProfiles
+                  - connect:DescribeRoutingProfile
+                  - connect:ListUsers
+                  - connect:DescribeUser
+                  - connect:ListUserHierarchyGroups
+                  - connect:DescribeUserHierarchyGroup
+                  - connect:ListHoursOfOperations
+                  - connect:DescribeHoursOfOperation
+                  - connect:ListPhoneNumbersV2
+                  - connect:DescribePhoneNumber
+                  - connect:ListQuickConnects
+                  - connect:DescribeQuickConnect
+                  - connect:ListSecurityProfiles
+                  - connect:DescribeSecurityProfile
+                  - connect:ListPrompts
+                  - connect:DescribePrompt
+                  - connect:ListBots
+                  - connect:ListLambdaFunctions
+                Resource: '*'
+              - Sid: LexAndLambdaRead
+                Effect: Allow
+                Action:
+                  - lex:ListBots
+                  - lex:ListBotAliases
+                  - lex:DescribeBot
+                  - lex:DescribeBotAlias
+                  - lambda:GetFunction
+                  - lambda:GetFunctionConfiguration
+                  - lambda:ListAliases
+                  - lambda:ListVersionsByFunction
+                Resource: '*'
+              - Sid: WriteTopology
+                Effect: Allow
+                Action:
+                  - dynamodb:PutItem
+                  - dynamodb:UpdateItem
+                  - dynamodb:BatchWriteItem
+                  - dynamodb:GetItem
+                  - dynamodb:Query
+                Resource:
+                  - !GetAtt TopologyTable.Arn
+                  - !Sub '${TopologyTable.Arn}/index/*'
+                  - !GetAtt JourneyTable.Arn
+                  - !Sub '${JourneyTable.Arn}/index/*'
+                  - !GetAtt IncidentDigestTable.Arn
+                  - !Sub '${IncidentDigestTable.Arn}/index/*'
+              - Sid: Snapshots
+                Effect: Allow
+                Action:
+                  - s3:PutObject
+                Resource: !Sub '${TopologySnapshotBucket.Arn}/*'
+              - Sid: TopologyRefreshQueueAccess
+                Effect: Allow
+                Action:
+                  - sqs:ReceiveMessage
+                  - sqs:DeleteMessage
+                  - sqs:GetQueueAttributes
+                Resource: !GetAtt TopologyRefreshQueue.Arn
+              - Sid: KmsUse
+                Effect: Allow
+                Action:
+                  - kms:Encrypt
+                  - kms:Decrypt
+                  - kms:GenerateDataKey
+                Resource: !GetAtt ConnectSreKmsKey.Arn
+
+  ActionDispatcherRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub '${EnvironmentName}-connect-sre-action-dispatcher-role'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: action-dispatcher-inline
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Sid: Logs
+                Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: '*'
+              - Sid: StateTables
+                Effect: Allow
+                Action:
+                  - dynamodb:GetItem
+                  - dynamodb:PutItem
+                  - dynamodb:UpdateItem
+                  - dynamodb:Query
+                Resource:
+                  - !GetAtt IncidentTable.Arn
+                  - !GetAtt ApprovalTable.Arn
+                  - !GetAtt AgentRunTable.Arn
+                  - !GetAtt PolicyConfigTable.Arn
+                  - !GetAtt ToolRegistryTable.Arn
+              - Sid: SafeDiagnosticAutomationOnly
+                Effect: Allow
+                Action:
+                  - ssm:StartAutomationExecution
+                  - ssm:GetAutomationExecution
+                  - states:StartExecution
+                  - states:DescribeExecution
+                Resource: '*'
+              - Sid: ExplicitDenyConnectWritesMvp
+                Effect: Deny
+                Action:
+                  - connect:Create*
+                  - connect:Update*
+                  - connect:Delete*
+                  - connect:Associate*
+                  - connect:Disassociate*
+                  - connect:Suspend*
+                  - connect:Resume*
+                  - lex:Create*
+                  - lex:Update*
+                  - lex:Delete*
+                  - lambda:Update*
+                  - lambda:Delete*
+                  - iam:Put*
+                  - iam:Delete*
+                  - kms:ScheduleKeyDeletion
+                Resource: '*'
+
+  AgentRuntimeTaskRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub '${EnvironmentName}-connect-sre-runtime-task-role'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ecs-tasks.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: runtime-read-state-models
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Sid: StateTables
+                Effect: Allow
+                Action:
+                  - dynamodb:GetItem
+                  - dynamodb:PutItem
+                  - dynamodb:UpdateItem
+                  - dynamodb:Query
+                  - dynamodb:Scan
+                Resource:
+                  - !GetAtt IncidentTable.Arn
+                  - !Sub '${IncidentTable.Arn}/index/*'
+                  - !GetAtt ApprovalTable.Arn
+                  - !Sub '${ApprovalTable.Arn}/index/*'
+                  - !GetAtt AgentRunTable.Arn
+                  - !Sub '${AgentRunTable.Arn}/index/*'
+                  - !GetAtt PolicyConfigTable.Arn
+                  - !GetAtt ToolRegistryTable.Arn
+                  - !GetAtt ModelConfigTable.Arn
+                  - !GetAtt TopologyTable.Arn
+                  - !Sub '${TopologyTable.Arn}/index/*'
+                  - !GetAtt JourneyTable.Arn
+                  - !Sub '${JourneyTable.Arn}/index/*'
+                  - !GetAtt IncidentDigestTable.Arn
+                  - !Sub '${IncidentDigestTable.Arn}/index/*'
+              - Sid: Buckets
+                Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:PutObject
+                  - s3:ListBucket
+                Resource:
+                  - !GetAtt EvidenceBucket.Arn
+                  - !Sub '${EvidenceBucket.Arn}/*'
+                  - !GetAtt RunbookBucket.Arn
+                  - !Sub '${RunbookBucket.Arn}/*'
+                  - !GetAtt TopologySnapshotBucket.Arn
+                  - !Sub '${TopologySnapshotBucket.Arn}/*'
+                  - !GetAtt AgentTraceBucket.Arn
+                  - !Sub '${AgentTraceBucket.Arn}/*'
+              - Sid: ConnectAndTelemetryRead
+                Effect: Allow
+                Action:
+                  - connect:ListInstances
+                  - connect:DescribeInstance
+                  - connect:ListContactFlows
+                  - connect:DescribeContactFlow
+                  - connect:ListContactFlowModules
+                  - connect:DescribeContactFlowModule
+                  - connect:ListQueues
+                  - connect:DescribeQueue
+                  - connect:ListRoutingProfiles
+                  - connect:DescribeRoutingProfile
+                  - connect:ListUsers
+                  - connect:DescribeUser
+                  - connect:ListHoursOfOperations
+                  - connect:DescribeHoursOfOperation
+                  - connect:ListPhoneNumbersV2
+                  - connect:DescribePhoneNumber
+                  - connect:ListQuickConnects
+                  - connect:DescribeQuickConnect
+                  - connect:ListSecurityProfiles
+                  - connect:DescribeSecurityProfile
+                  - connect:ListPrompts
+                  - connect:DescribePrompt
+                  - connect:ListBots
+                  - connect:ListLambdaFunctions
+                  - cloudwatch:DescribeAlarms
+                  - cloudwatch:GetMetricData
+                  - cloudwatch:GetMetricStatistics
+                  - logs:StartQuery
+                  - logs:GetQueryResults
+                  - logs:DescribeLogGroups
+                  - logs:DescribeLogStreams
+                  - logs:FilterLogEvents
+                  - cloudtrail:LookupEvents
+                  - lex:ListBots
+                  - lex:ListBotAliases
+                  - lex:DescribeBot
+                  - lex:DescribeBotAlias
+                  - lambda:GetFunction
+                  - lambda:GetFunctionConfiguration
+                  - lambda:ListAliases
+                  - lambda:ListVersionsByFunction
+                  - servicequotas:GetServiceQuota
+                  - servicequotas:ListServiceQuotas
+                  - health:DescribeEvents
+                  - health:DescribeEventDetails
+                Resource: '*'
+              - Sid: BedrockInvokeIfConfigured
+                Effect: Allow
+                Action:
+                  - bedrock:InvokeModel
+                  - bedrock:InvokeModelWithResponseStream
+                Resource: '*'
+              - Sid: SecretsForModelProviders
+                Effect: Allow
+                Action:
+                  - secretsmanager:GetSecretValue
+                Resource: '*'
+              - Sid: KmsUse
+                Effect: Allow
+                Action:
+                  - kms:Encrypt
+                  - kms:Decrypt
+                  - kms:GenerateDataKey
+                Resource: !GetAtt ConnectSreKmsKey.Arn
+              - Sid: ExplicitDenyWritesFromRuntime
+                Effect: Deny
+                Action:
+                  - connect:Create*
+                  - connect:Update*
+                  - connect:Delete*
+                  - connect:Associate*
+                  - connect:Disassociate*
+                  - lex:Create*
+                  - lex:Update*
+                  - lex:Delete*
+                  - lambda:Update*
+                  - lambda:Delete*
+                  - iam:Put*
+                  - iam:Delete*
+                Resource: '*'
+
+  NormalizerLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/connect-sre/${EnvironmentName}/normalizer'
+      RetentionInDays: 30
+      KmsKeyId: !GetAtt ConnectSreKmsKey.Arn
+
+  TopologyScannerLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/connect-sre/${EnvironmentName}/topology-scanner'
+      RetentionInDays: 30
+      KmsKeyId: !GetAtt ConnectSreKmsKey.Arn
+
+  RuntimeLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/connect-sre/${EnvironmentName}/runtime'
+      RetentionInDays: 30
+      KmsKeyId: !GetAtt ConnectSreKmsKey.Arn
+
+  ActionLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/connect-sre/${EnvironmentName}/actions'
+      RetentionInDays: 30
+      KmsKeyId: !GetAtt ConnectSreKmsKey.Arn
+
+  AuditLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/connect-sre/${EnvironmentName}/audit'
+      RetentionInDays: 365
+      KmsKeyId: !GetAtt ConnectSreKmsKey.Arn
+
+  NormalizerFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub '${EnvironmentName}-connect-sre-normalizer'
+      Runtime: python3.12
+      Handler: index.handler
+      Role: !GetAtt NormalizerExecutionRole.Arn
+      Timeout: 30
+      MemorySize: 256
+      Environment:
+        Variables:
+          INCIDENT_TABLE_NAME: !Ref IncidentTable
+          INCIDENT_DIGEST_TABLE_NAME: !Ref IncidentDigestTable
+          EVIDENCE_BUCKET_NAME: !Ref EvidenceBucket
+          CONNECT_SRE_EVENT_BUS_NAME: !Ref ConnectSreEventBus
+      Code:
+        ZipFile: |
+          import json
+          def handler(event, context):
+              # Placeholder only.
+              # Real implementation normalizes CloudWatch Connect alarms,
+              # CloudTrail Connect/Lex/Lambda changes, and scheduled checks.
+              print(json.dumps({"message": "connect sre normalizer placeholder", "event": event}))
+              return {"ok": True, "placeholder": True}
+
+  TopologyScannerFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub '${EnvironmentName}-connect-sre-topology-scanner'
+      Runtime: python3.12
+      Handler: index.handler
+      Role: !GetAtt TopologyScannerRole.Arn
+      Timeout: 300
+      MemorySize: 512
+      Environment:
+        Variables:
+          TOPOLOGY_TABLE_NAME: !Ref TopologyTable
+          JOURNEY_TABLE_NAME: !Ref JourneyTable
+          TOPOLOGY_SNAPSHOT_BUCKET_NAME: !Ref TopologySnapshotBucket
+          TOPOLOGY_REFRESH_QUEUE_URL: !Ref TopologyRefreshQueue
+          CONNECT_INSTANCE_IDS: !Join [",", !Ref ConnectInstanceIds]
+      Code:
+        ZipFile: |
+          import json
+          def handler(event, context):
+              # Placeholder only.
+              # Real implementation inventories Connect instances, flows, modules,
+              # queues, routing profiles, users, hours, Lex, and Lambda references.
+              print(json.dumps({"message": "connect topology scanner placeholder", "event": event}))
+              return {"ok": True, "placeholder": True}
+
+  ActionDispatcherFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub '${EnvironmentName}-connect-sre-action-dispatcher'
+      Runtime: python3.12
+      Handler: index.handler
+      Role: !GetAtt ActionDispatcherRole.Arn
+      Timeout: 60
+      MemorySize: 256
+      Environment:
+        Variables:
+          INCIDENT_TABLE_NAME: !Ref IncidentTable
+          APPROVAL_TABLE_NAME: !Ref ApprovalTable
+          TOOL_REGISTRY_TABLE_NAME: !Ref ToolRegistryTable
+          POLICY_TABLE_NAME: !Ref PolicyConfigTable
+          ENABLE_CONNECT_WRITE_ACTIONS: !Ref EnableConnectWriteActions
+          ENABLE_AUTONOMOUS_ACTIONS: !Ref EnableAutonomousActions
+      Code:
+        ZipFile: |
+          import json
+          def handler(event, context):
+              # Placeholder only.
+              # MVP supports notify/ticket/diagnostic workflows, not direct Connect mutation.
+              print(json.dumps({"message": "connect action dispatcher placeholder", "event": event}))
+              return {"ok": True, "placeholder": True, "executed": False}
+
+  CloudWatchAlarmRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: !Sub '${EnvironmentName}-connect-sre-cloudwatch-alarms'
+      Description: Routes CloudWatch alarm state changes, including Connect alarms, to normalizer.
+      EventPattern:
+        source:
+          - aws.cloudwatch
+        detail-type:
+          - CloudWatch Alarm State Change
+      Targets:
+        - Id: Normalizer
+          Arn: !GetAtt NormalizerFunction.Arn
+          DeadLetterConfig:
+            Arn: !GetAtt ConnectSreDlq.Arn
+
+  CloudWatchAlarmRulePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref NormalizerFunction
+      Action: lambda:InvokeFunction
+      Principal: events.amazonaws.com
+      SourceArn: !GetAtt CloudWatchAlarmRule.Arn
+
+  ConnectCloudTrailChangeRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: !Sub '${EnvironmentName}-connect-sre-connect-cloudtrail-changes'
+      Description: Routes Amazon Connect API changes captured through CloudTrail to normalizer.
+      EventPattern:
+        detail-type:
+          - AWS API Call via CloudTrail
+        source:
+          - aws.connect
+        detail:
+          eventSource:
+            - connect.amazonaws.com
+      Targets:
+        - Id: Normalizer
+          Arn: !GetAtt NormalizerFunction.Arn
+          DeadLetterConfig:
+            Arn: !GetAtt ConnectSreDlq.Arn
+
+  ConnectCloudTrailChangeRulePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref NormalizerFunction
+      Action: lambda:InvokeFunction
+      Principal: events.amazonaws.com
+      SourceArn: !GetAtt ConnectCloudTrailChangeRule.Arn
+
+  LexCloudTrailChangeRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: !Sub '${EnvironmentName}-connect-sre-lex-cloudtrail-changes'
+      Description: Routes Lex API changes that may affect Connect flows to normalizer.
+      EventPattern:
+        detail-type:
+          - AWS API Call via CloudTrail
+        source:
+          - aws.lex
+        detail:
+          eventSource:
+            - lexv2.amazonaws.com
+            - lex.amazonaws.com
+      Targets:
+        - Id: Normalizer
+          Arn: !GetAtt NormalizerFunction.Arn
+          DeadLetterConfig:
+            Arn: !GetAtt ConnectSreDlq.Arn
+
+  LexCloudTrailChangeRulePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref NormalizerFunction
+      Action: lambda:InvokeFunction
+      Principal: events.amazonaws.com
+      SourceArn: !GetAtt LexCloudTrailChangeRule.Arn
+
+  LambdaCloudTrailChangeRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: !Sub '${EnvironmentName}-connect-sre-lambda-cloudtrail-changes'
+      Description: Routes Lambda config changes for possible Connect integration correlation.
+      EventPattern:
+        detail-type:
+          - AWS API Call via CloudTrail
+        source:
+          - aws.lambda
+        detail:
+          eventSource:
+            - lambda.amazonaws.com
+      Targets:
+        - Id: Normalizer
+          Arn: !GetAtt NormalizerFunction.Arn
+          DeadLetterConfig:
+            Arn: !GetAtt ConnectSreDlq.Arn
+
+  LambdaCloudTrailChangeRulePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref NormalizerFunction
+      Action: lambda:InvokeFunction
+      Principal: events.amazonaws.com
+      SourceArn: !GetAtt LambdaCloudTrailChangeRule.Arn
+
+  ScheduledTopologyScanRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: !Sub '${EnvironmentName}-connect-sre-topology-scan'
+      Description: Scheduled Amazon Connect topology scan.
+      ScheduleExpression: rate(30 minutes)
+      State: ENABLED
+      Targets:
+        - Id: TopologyScanner
+          Arn: !GetAtt TopologyScannerFunction.Arn
+          DeadLetterConfig:
+            Arn: !GetAtt ConnectSreDlq.Arn
+
+  ScheduledTopologyScanRulePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref TopologyScannerFunction
+      Action: lambda:InvokeFunction
+      Principal: events.amazonaws.com
+      SourceArn: !GetAtt ScheduledTopologyScanRule.Arn
+
+  ScheduledProactiveCheckRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: !Sub '${EnvironmentName}-connect-sre-proactive-check'
+      Description: Scheduled proactive Connect health check trigger.
+      ScheduleExpression: rate(15 minutes)
+      State: ENABLED
+      Targets:
+        - Id: Normalizer
+          Arn: !GetAtt NormalizerFunction.Arn
+          Input: !Sub |
+            {
+              "source": "connect-sre.schedule",
+              "detail-type": "ScheduledConnectProactiveCheck",
+              "environment": "${EnvironmentName}"
+            }
+          DeadLetterConfig:
+            Arn: !GetAtt ConnectSreDlq.Arn
+
+  ScheduledProactiveCheckRulePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref NormalizerFunction
+      Action: lambda:InvokeFunction
+      Principal: events.amazonaws.com
+      SourceArn: !GetAtt ScheduledProactiveCheckRule.Arn
+
+Outputs:
+  EventBusName:
+    Description: Connect SRE EventBridge bus name.
+    Value: !Ref ConnectSreEventBus
+
+  EventBusArn:
+    Description: Connect SRE EventBridge bus ARN.
+    Value: !GetAtt ConnectSreEventBus.Arn
+
+  IncidentTableName:
+    Description: Incident DynamoDB table.
+    Value: !Ref IncidentTable
+
+  ApprovalTableName:
+    Description: Approval DynamoDB table.
+    Value: !Ref ApprovalTable
+
+  AgentRunTableName:
+    Description: Agent run DynamoDB table.
+    Value: !Ref AgentRunTable
+
+  ToolRegistryTableName:
+    Description: Tool registry DynamoDB table.
+    Value: !Ref ToolRegistryTable
+
+  ModelConfigTableName:
+    Description: Model config DynamoDB table.
+    Value: !Ref ModelConfigTable
+
+  TopologyTableName:
+    Description: Connect topology DynamoDB table.
+    Value: !Ref TopologyTable
+
+  IncidentDigestTableName:
+    Description: Incident digest DynamoDB table for compressed evidence.
+    Value: !Ref IncidentDigestTable
+
+  JourneyTableName:
+    Description: Business journey mapping DynamoDB table.
+    Value: !Ref JourneyTable
+
+  EvidenceBucketName:
+    Description: Evidence S3 bucket.
+    Value: !Ref EvidenceBucket
+
+  RunbookBucketName:
+    Description: Runbook S3 bucket.
+    Value: !Ref RunbookBucket
+
+  TopologySnapshotBucketName:
+    Description: Topology snapshot S3 bucket.
+    Value: !Ref TopologySnapshotBucket
+
+  TopologyRefreshQueueUrl:
+    Description: Queue for partial topology refresh requests.
+    Value: !Ref TopologyRefreshQueue
+
+  AgentTraceBucketName:
+    Description: S3 bucket for detailed agent execution traces.
+    Value: !Ref AgentTraceBucket
+
+  NormalizerFunctionArn:
+    Description: Connect normalizer Lambda ARN.
+    Value: !GetAtt NormalizerFunction.Arn
+
+  TopologyScannerFunctionArn:
+    Description: Connect topology scanner Lambda ARN.
+    Value: !GetAtt TopologyScannerFunction.Arn
+
+  ActionDispatcherFunctionArn:
+    Description: Action dispatcher Lambda ARN.
+    Value: !GetAtt ActionDispatcherFunction.Arn
+
+  AgentRuntimeTaskRoleArn:
+    Description: ECS/App Runner task role for ADK runtime.
+    Value: !GetAtt AgentRuntimeTaskRole.Arn
