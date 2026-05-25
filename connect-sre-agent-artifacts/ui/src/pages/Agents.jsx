@@ -86,9 +86,9 @@ const Agents = () => {
   if (loading) return <div style={{ padding: '2rem' }}>Loading agent telemetry...</div>;
 
   return (
-    <div style={{ display: 'flex', gap: '1.5rem', height: '100%', padding: '1rem' }}>
+    <div style={{ display: 'flex', gap: '1.5rem', height: '100%', padding: '1rem', overflow: 'hidden' }}>
       {/* Graph Area */}
-      <div className="glass-panel" style={{ flex: 2, display: 'flex', flexDirection: 'column' }}>
+      <div className="glass-panel" style={{ flex: 2, display: 'flex', flexDirection: 'column', height: '100%' }}>
         <h2 style={{ fontSize: '1.2rem', fontWeight: 600, marginBottom: '0.5rem' }}>ADK Agent Swarm</h2>
         <div style={{ flex: 1, border: '1px solid var(--border-glass)', borderRadius: '8px', overflow: 'hidden' }}>
           <ReactFlow nodes={initialNodes} edges={initialEdges} onNodeClick={onNodeClick} fitView nodesDraggable={false}>
@@ -99,7 +99,7 @@ const Agents = () => {
       </div>
 
       {/* Detail Panel */}
-      <div className="glass-panel" style={{ flex: 1, display: 'flex', flexDirection: 'column' }}>
+      <div className="glass-panel" style={{ flex: 1, display: 'flex', flexDirection: 'column', height: '100%', overflowY: 'auto', paddingRight: '1rem' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '1.5rem', borderBottom: '1px solid var(--border-glass)', paddingBottom: '1rem' }}>
           <Bot size={24} color="var(--accent-cyan)" />
           <h2 style={{ fontSize: '1.4rem', fontWeight: 600 }}>Agent Detail</h2>

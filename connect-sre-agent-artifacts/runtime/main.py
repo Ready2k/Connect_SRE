@@ -61,8 +61,28 @@ _model_config: Dict[str, Any] = {
 # In-memory cache for Connect instance list (avoid hammering the API)
 _instances_cache: Dict[str, Any] = {"data": None, "fetched_at": 0}
 
+def _write_trace(run_id: str, incident_id: str, started_at: str, latency_ms: int, status: str, thought_process: str):
+    try:
+        dynamodb.Table(TRACE_TABLE_NAME).put_item(Item={
+            "runId": run_id,
+            "incidentId": incident_id,
+            "agentName": "SupervisorAgent",
+            "startedAt": started_at,
+            "latencyMs": latency_ms,
+            "modelId": _ACTIVE_MODEL_LABEL,
+            "toolCalls": [],
+            "status": status,
+            "thoughtProcess": thought_process,
+        })
+    except Exception as e:
+        logger.error(f"Failed to write trace {run_id}: {e}")
+
+
 async def investigate_incident_background(payload: IncidentPayload):
     logger.info(f"Starting investigation for incident {payload.incidentId}")
+    run_id = f"run-{uuid.uuid4().hex[:8]}"
+    started_at = datetime.utcnow().isoformat() + "Z"
+    start_time = time.time()
     try:
         async with get_supervisor_agent() as supervisor:
             prompt = (
@@ -77,9 +97,13 @@ async def investigate_incident_background(payload: IncidentPayload):
             )
             response = await supervisor.chat(prompt)
             final_report = await response.text()
+            latency_ms = int((time.time() - start_time) * 1000)
             logger.info(f"Investigation Complete for {payload.incidentId}. Final Report:\n{final_report}")
+            _write_trace(run_id, payload.incidentId, started_at, latency_ms, "success", final_report[:2000])
     except Exception as e:
+        latency_ms = int((time.time() - start_time) * 1000)
         logger.error(f"Agent execution failed for incident {payload.incidentId}: {str(e)}")
+        _write_trace(run_id, payload.incidentId, started_at, latency_ms, "error", str(e)[:2000])
 
 @app.get("/health")
 async def health_check():
