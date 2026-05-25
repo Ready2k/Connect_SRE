@@ -18,11 +18,6 @@ Parameters:
     Default: dev
     AllowedPattern: '^[a-zA-Z0-9-]+$'
 
-  AgentRuntimeImageUri:
-    Type: String
-    Default: placeholder.dkr.ecr.eu-west-2.amazonaws.com/connect-sre-agent-runtime:latest
-    Description: Container image URI for ADK runtime service.
-
   ConnectInstanceIds:
     Type: CommaDelimitedList
     Default: ''
@@ -66,220 +61,10 @@ Parameters:
     Type: Number
     Default: 180
 
-  AllowedAdminCIDR:
-    Type: String
-    Default: 0.0.0.0/0
-    Description: CIDR allowed to reach admin endpoints in MVP. Tighten outside demos.
-
-
 
 
 
 Resources:
-  # VPC Networking (Option 2)
-  Vpc:
-    Type: AWS::EC2::VPC
-    Properties:
-      CidrBlock: 10.0.0.0/16
-      EnableDnsSupport: true
-      EnableDnsHostnames: true
-      Tags:
-        - Key: Name
-          Value: !Sub '${EnvironmentName}-connect-sre-vpc'
-
-  PublicSubnet1:
-    Type: AWS::EC2::Subnet
-    Properties:
-      VpcId: !Ref Vpc
-      CidrBlock: 10.0.1.0/24
-      AvailabilityZone: !Select [0, !GetAZs '']
-      MapPublicIpOnLaunch: true
-      Tags:
-        - Key: Name
-          Value: !Sub '${EnvironmentName}-connect-sre-public-1'
-
-  PublicSubnet2:
-    Type: AWS::EC2::Subnet
-    Properties:
-      VpcId: !Ref Vpc
-      CidrBlock: 10.0.2.0/24
-      AvailabilityZone: !Select [1, !GetAZs '']
-      MapPublicIpOnLaunch: true
-      Tags:
-        - Key: Name
-          Value: !Sub '${EnvironmentName}-connect-sre-public-2'
-
-  InternetGateway:
-    Type: AWS::EC2::InternetGateway
-    Properties:
-      Tags:
-        - Key: Name
-          Value: !Sub '${EnvironmentName}-connect-sre-igw'
-
-  VpcGatewayAttachment:
-    Type: AWS::EC2::VPCGatewayAttachment
-    Properties:
-      VpcId: !Ref Vpc
-      InternetGatewayId: !Ref InternetGateway
-
-  PublicRouteTable:
-    Type: AWS::EC2::RouteTable
-    Properties:
-      VpcId: !Ref Vpc
-      Tags:
-        - Key: Name
-          Value: !Sub '${EnvironmentName}-connect-sre-public-rt'
-
-  PublicRoute:
-    Type: AWS::EC2::Route
-    DependsOn: VpcGatewayAttachment
-    Properties:
-      RouteTableId: !Ref PublicRouteTable
-      DestinationCidrBlock: 0.0.0.0/0
-      GatewayId: !Ref InternetGateway
-
-  PublicSubnet1RouteTableAssociation:
-    Type: AWS::EC2::SubnetRouteTableAssociation
-    Properties:
-      SubnetId: !Ref PublicSubnet1
-      RouteTableId: !Ref PublicRouteTable
-
-  PublicSubnet2RouteTableAssociation:
-    Type: AWS::EC2::SubnetRouteTableAssociation
-    Properties:
-      SubnetId: !Ref PublicSubnet2
-      RouteTableId: !Ref PublicRouteTable
-
-  # Security Groups
-  AlbSecurityGroup:
-    Type: AWS::EC2::SecurityGroup
-    Properties:
-      GroupDescription: Enable HTTP access to ALB from Admin CIDR
-      VpcId: !Ref Vpc
-      SecurityGroupIngress:
-        - IpProtocol: tcp
-          FromPort: 80
-          ToPort: 80
-          CidrIp: !Ref AllowedAdminCIDR
-      Tags:
-        - Key: Name
-          Value: !Sub '${EnvironmentName}-connect-sre-alb-sg'
-
-  EcsSecurityGroup:
-    Type: AWS::EC2::SecurityGroup
-    Properties:
-      GroupDescription: Enable access to ECS container from ALB only
-      VpcId: !Ref Vpc
-      SecurityGroupIngress:
-        - IpProtocol: tcp
-          FromPort: 8000
-          ToPort: 8000
-          SourceSecurityGroupId: !Ref AlbSecurityGroup
-      Tags:
-        - Key: Name
-          Value: !Sub '${EnvironmentName}-connect-sre-ecs-sg'
-
-  # Application Load Balancer
-  ApplicationLoadBalancer:
-    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
-    Properties:
-      Name: !Sub '${EnvironmentName}-connect-sre-alb'
-      Subnets:
-        - !Ref PublicSubnet1
-        - !Ref PublicSubnet2
-      SecurityGroups:
-        - !Ref AlbSecurityGroup
-      Type: application
-      IpAddressType: ipv4
-
-  AlbTargetGroup:
-    Type: AWS::ElasticLoadBalancingV2::TargetGroup
-    Properties:
-      Name: !Sub '${EnvironmentName}-connect-sre-tg'
-      Port: 8000
-      Protocol: HTTP
-      VpcId: !Ref Vpc
-      TargetType: ip
-      HealthCheckIntervalSeconds: 30
-      HealthCheckPath: /health
-      HealthCheckProtocol: HTTP
-      HealthCheckTimeoutSeconds: 5
-      HealthyThresholdCount: 2
-      UnhealthyThresholdCount: 5
-
-  AlbListener:
-    Type: AWS::ElasticLoadBalancingV2::Listener
-    Properties:
-      DefaultActions:
-        - Type: forward
-          TargetGroupArn: !Ref AlbTargetGroup
-      LoadBalancerArn: !Ref ApplicationLoadBalancer
-      Port: 80
-      Protocol: HTTP
-
-  # ECS Fargate Resources
-  EcsCluster:
-    Type: AWS::ECS::Cluster
-    Properties:
-      ClusterName: !Sub '${EnvironmentName}-connect-sre-cluster'
-
-  EcsTaskDefinition:
-    Type: AWS::ECS::TaskDefinition
-    Properties:
-      Family: !Sub '${EnvironmentName}-connect-sre-runtime'
-      Cpu: '256'
-      Memory: '512'
-      NetworkMode: awsvpc
-      RequiresCompatibilities:
-        - FARGATE
-      ExecutionRoleArn: !Sub 'arn:aws:iam::${AWS::AccountId}:role/ecsTaskExecutionRole'
-      TaskRoleArn: !GetAtt AgentRuntimeTaskRole.Arn
-      ContainerDefinitions:
-        - Name: sre-agent-runtime
-          Image: !Ref AgentRuntimeImageUri
-          PortMappings:
-            - ContainerPort: 8000
-              Protocol: tcp
-          Environment:
-            - Name: ENVIRONMENT
-              Value: !Ref EnvironmentName
-            - Name: MODEL_PROVIDER
-              Value: !Ref DefaultModelProvider
-            - Name: MODEL_ID
-              Value: !Ref DefaultModelId
-            - Name: INCIDENT_TABLE_NAME
-              Value: !Ref IncidentTable
-            - Name: TOPOLOGY_TABLE_NAME
-              Value: !Ref TopologyTable
-          LogConfiguration:
-            LogDriver: awslogs
-            Options:
-              awslogs-group: !Ref RuntimeLogGroup
-              awslogs-region: !Ref 'AWS::Region'
-              awslogs-stream-prefix: ecs
-
-  EcsService:
-    Type: AWS::ECS::Service
-    DependsOn: AlbListener
-    Properties:
-      ServiceName: !Sub '${EnvironmentName}-connect-sre-service'
-      Cluster: !Ref EcsCluster
-      TaskDefinition: !Ref EcsTaskDefinition
-      LaunchType: FARGATE
-      DesiredCount: 1
-      NetworkConfiguration:
-        AwsvpcConfiguration:
-          AssignPublicIp: ENABLED
-          Subnets:
-            - !Ref PublicSubnet1
-            - !Ref PublicSubnet2
-          SecurityGroups:
-            - !Ref EcsSecurityGroup
-      LoadBalancers:
-        - ContainerName: sre-agent-runtime
-          ContainerPort: 8000
-          TargetGroupArn: !Ref AlbTargetGroup
-
   ConnectSreKmsKey:
     Type: AWS::KMS::Key
     Properties:
@@ -294,6 +79,20 @@ Resources:
               AWS: !Sub 'arn:aws:iam::${AWS::AccountId}:root'
             Action: 'kms:*'
             Resource: '*'
+          - Sid: AllowCloudWatchLogs
+            Effect: Allow
+            Principal:
+              Service: !Sub 'logs.${AWS::Region}.amazonaws.com'
+            Action:
+              - kms:Encrypt
+              - kms:Decrypt
+              - kms:ReEncrypt*
+              - kms:GenerateDataKey
+              - kms:DescribeKey
+            Resource: '*'
+            Condition:
+              ArnLike:
+                'kms:EncryptionContext:aws:logs:arn': !Sub 'arn:aws:logs:${AWS::Region}:${AWS::AccountId}:*'
 
   ConnectSreKmsAlias:
     Type: AWS::KMS::Alias
@@ -861,145 +660,6 @@ Resources:
                   - kms:ScheduleKeyDeletion
                 Resource: '*'
 
-  AgentRuntimeTaskRole:
-    Type: AWS::IAM::Role
-    Properties:
-      RoleName: !Sub '${EnvironmentName}-connect-sre-runtime-task-role'
-      AssumeRolePolicyDocument:
-        Version: '2012-10-17'
-        Statement:
-          - Effect: Allow
-            Principal:
-              Service: ecs-tasks.amazonaws.com
-            Action: sts:AssumeRole
-      Policies:
-        - PolicyName: runtime-read-state-models
-          PolicyDocument:
-            Version: '2012-10-17'
-            Statement:
-              - Sid: StateTables
-                Effect: Allow
-                Action:
-                  - dynamodb:GetItem
-                  - dynamodb:PutItem
-                  - dynamodb:UpdateItem
-                  - dynamodb:Query
-                  - dynamodb:Scan
-                Resource:
-                  - !GetAtt IncidentTable.Arn
-                  - !Sub '${IncidentTable.Arn}/index/*'
-                  - !GetAtt ApprovalTable.Arn
-                  - !Sub '${ApprovalTable.Arn}/index/*'
-                  - !GetAtt AgentRunTable.Arn
-                  - !Sub '${AgentRunTable.Arn}/index/*'
-                  - !GetAtt PolicyConfigTable.Arn
-                  - !GetAtt ToolRegistryTable.Arn
-                  - !GetAtt ModelConfigTable.Arn
-                  - !GetAtt TopologyTable.Arn
-                  - !Sub '${TopologyTable.Arn}/index/*'
-                  - !GetAtt JourneyTable.Arn
-                  - !Sub '${JourneyTable.Arn}/index/*'
-                  - !GetAtt IncidentDigestTable.Arn
-                  - !Sub '${IncidentDigestTable.Arn}/index/*'
-              - Sid: Buckets
-                Effect: Allow
-                Action:
-                  - s3:GetObject
-                  - s3:PutObject
-                  - s3:ListBucket
-                Resource:
-                  - !GetAtt EvidenceBucket.Arn
-                  - !Sub '${EvidenceBucket.Arn}/*'
-                  - !GetAtt RunbookBucket.Arn
-                  - !Sub '${RunbookBucket.Arn}/*'
-                  - !GetAtt TopologySnapshotBucket.Arn
-                  - !Sub '${TopologySnapshotBucket.Arn}/*'
-                  - !GetAtt AgentTraceBucket.Arn
-                  - !Sub '${AgentTraceBucket.Arn}/*'
-              - Sid: ConnectAndTelemetryRead
-                Effect: Allow
-                Action:
-                  - connect:ListInstances
-                  - connect:DescribeInstance
-                  - connect:ListContactFlows
-                  - connect:DescribeContactFlow
-                  - connect:ListContactFlowModules
-                  - connect:DescribeContactFlowModule
-                  - connect:ListQueues
-                  - connect:DescribeQueue
-                  - connect:ListRoutingProfiles
-                  - connect:DescribeRoutingProfile
-                  - connect:ListUsers
-                  - connect:DescribeUser
-                  - connect:ListHoursOfOperations
-                  - connect:DescribeHoursOfOperation
-                  - connect:ListPhoneNumbersV2
-                  - connect:DescribePhoneNumber
-                  - connect:ListQuickConnects
-                  - connect:DescribeQuickConnect
-                  - connect:ListSecurityProfiles
-                  - connect:DescribeSecurityProfile
-                  - connect:ListPrompts
-                  - connect:DescribePrompt
-                  - connect:ListBots
-                  - connect:ListLambdaFunctions
-                  - cloudwatch:DescribeAlarms
-                  - cloudwatch:GetMetricData
-                  - cloudwatch:GetMetricStatistics
-                  - logs:StartQuery
-                  - logs:GetQueryResults
-                  - logs:DescribeLogGroups
-                  - logs:DescribeLogStreams
-                  - logs:FilterLogEvents
-                  - cloudtrail:LookupEvents
-                  - lex:ListBots
-                  - lex:ListBotAliases
-                  - lex:DescribeBot
-                  - lex:DescribeBotAlias
-                  - lambda:GetFunction
-                  - lambda:GetFunctionConfiguration
-                  - lambda:ListAliases
-                  - lambda:ListVersionsByFunction
-                  - servicequotas:GetServiceQuota
-                  - servicequotas:ListServiceQuotas
-                  - health:DescribeEvents
-                  - health:DescribeEventDetails
-                Resource: '*'
-              - Sid: BedrockInvokeIfConfigured
-                Effect: Allow
-                Action:
-                  - bedrock:InvokeModel
-                  - bedrock:InvokeModelWithResponseStream
-                Resource: '*'
-              - Sid: SecretsForModelProviders
-                Effect: Allow
-                Action:
-                  - secretsmanager:GetSecretValue
-                Resource: '*'
-              - Sid: KmsUse
-                Effect: Allow
-                Action:
-                  - kms:Encrypt
-                  - kms:Decrypt
-                  - kms:GenerateDataKey
-                Resource: !GetAtt ConnectSreKmsKey.Arn
-              - Sid: ExplicitDenyWritesFromRuntime
-                Effect: Deny
-                Action:
-                  - connect:Create*
-                  - connect:Update*
-                  - connect:Delete*
-                  - connect:Associate*
-                  - connect:Disassociate*
-                  - lex:Create*
-                  - lex:Update*
-                  - lex:Delete*
-                  - lambda:Update*
-                  - lambda:Delete*
-                  - iam:Put*
-                  - iam:Delete*
-                Resource: '*'
-
   NormalizerLogGroup:
     Type: AWS::Logs::LogGroup
     Properties:
@@ -1348,10 +1008,3 @@ Outputs:
     Description: Action dispatcher Lambda ARN.
     Value: !GetAtt ActionDispatcherFunction.Arn
 
-  AgentRuntimeTaskRoleArn:
-    Description: ECS/App Runner task role for ADK runtime.
-    Value: !GetAtt AgentRuntimeTaskRole.Arn
-
-  ConsoleLoadBalancerDNS:
-    Description: DNS name of the Application Load Balancer hosting the SRE Agent Console.
-    Value: !GetAtt ApplicationLoadBalancer.DNSName

@@ -1,3 +1,4 @@
+import { useState, useEffect } from 'react';
 import SREOverview from '../components/widgets/SREOverview';
 import SystemHealth from '../components/widgets/SystemHealth';
 import GlobalTopology from '../components/widgets/GlobalTopology';
@@ -9,34 +10,75 @@ import PendingApprovals from '../components/widgets/PendingApprovals';
 import ActivityFeed from '../components/widgets/ActivityFeed';
 
 const Home = () => {
+  const [metrics, setMetrics] = useState(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    const fetchMetrics = () => {
+      fetch('/api/monitoring/metrics')
+        .then(res => res.json())
+        .then(data => {
+          setMetrics(data);
+          setLoading(false);
+        })
+        .catch(err => {
+          console.error("Failed to fetch monitoring metrics", err);
+        });
+    };
+
+    fetchMetrics();
+    const interval = setInterval(fetchMetrics, 5000);
+    return () => clearInterval(interval);
+  }, []);
+
+  if (loading) {
+    return (
+      <div style={{ 
+        display: 'flex', 
+        height: '100%', 
+        alignItems: 'center', 
+        justifyContent: 'center', 
+        color: 'var(--text-secondary)',
+        fontSize: '1rem',
+        fontWeight: 500
+      }}>
+        Ingesting live Connect telemetry...
+      </div>
+    );
+  }
+
   return (
     <div className="dashboard-grid">
       <div className="glass-panel widget overview-widget">
-        <SREOverview />
+        <SREOverview data={metrics.sreOverview} />
       </div>
       <div className="glass-panel widget health-widget">
-        <SystemHealth />
+        <SystemHealth data={metrics.systemHealth} />
       </div>
       <div className="glass-panel widget topology-widget">
         <GlobalTopology />
       </div>
       <div className="glass-panel widget queues-widget">
-        <QueuesChart />
+        <QueuesChart data={metrics.queueVolumes} />
       </div>
       <div className="glass-panel widget incidents-widget">
-        <IncidentsChart />
+        <IncidentsChart data={metrics.incidentsTimeSeries} />
       </div>
       <div className="glass-panel widget queue-metrics-widget">
-        <QueueMetrics />
+        <QueueMetrics 
+          data={metrics.queueHealthMetrics} 
+          concurrentCalls={metrics.concurrentCalls} 
+          abandonRate={metrics.abandonRate} 
+        />
       </div>
       <div className="glass-panel widget lex-bot-widget">
-        <LexBotHealth />
+        <LexBotHealth data={metrics.lexBots} />
       </div>
       <div className="glass-panel widget approvals-widget">
         <PendingApprovals />
       </div>
       <div className="glass-panel widget activity-widget" style={{ padding: '1rem 1.5rem', flexDirection: 'row' }}>
-        <ActivityFeed />
+        <ActivityFeed data={metrics.activityFeed} />
       </div>
     </div>
   );

@@ -1,16 +1,10 @@
 import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer } from 'recharts';
 
-const data = [
-  { time: '00hrs', sev1: 0, sev2: 2, sev3: 5, sev4: 10 },
-  { time: '04hrs', sev1: 1, sev2: 3, sev3: 8, sev4: 12 },
-  { time: '08hrs', sev1: 2, sev2: 5, sev3: 12, sev4: 15 },
-  { time: '12hrs', sev1: 1, sev2: 4, sev3: 10, sev4: 18 },
-  { time: '16hrs', sev1: 3, sev2: 6, sev3: 15, sev4: 20 },
-  { time: '20hrs', sev1: 2, sev2: 5, sev3: 14, sev4: 19 },
-  { time: '24hrs', sev1: 3, sev2: 6, sev3: 12, sev4: 19 },
-];
+const IncidentsChart = ({ data }) => {
+  if (!data || data.length === 0) return null;
 
-const IncidentsChart = () => {
+  const current = data[data.length - 1] || { sev1: 0, sev2: 0, sev3: 0, sev4: 0 };
+
   return (
     <>
       <div className="flex-between" style={{ marginBottom: '1rem' }}>
@@ -21,10 +15,10 @@ const IncidentsChart = () => {
       </div>
       
       <div style={{ display: 'flex', gap: '1rem', fontSize: '0.75rem', marginBottom: '1rem' }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}><div style={{ width: 8, height: 8, borderRadius: '50%', background: 'var(--status-critical)' }}></div> SEV1 Critical (3)</div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}><div style={{ width: 8, height: 8, borderRadius: '50%', background: 'var(--status-warn)' }}></div> SEV2 High (6)</div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}><div style={{ width: 8, height: 8, borderRadius: '50%', background: 'var(--accent-blue)' }}></div> SEV3 Med (12)</div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}><div style={{ width: 8, height: 8, borderRadius: '50%', background: 'var(--accent-cyan)' }}></div> SEV4 Low (19)</div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}><div style={{ width: 8, height: 8, borderRadius: '50%', background: 'var(--status-critical)' }}></div> SEV1 Critical ({current.sev1})</div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}><div style={{ width: 8, height: 8, borderRadius: '50%', background: 'var(--status-warn)' }}></div> SEV2 High ({current.sev2})</div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}><div style={{ width: 8, height: 8, borderRadius: '50%', background: 'var(--accent-blue)' }}></div> SEV3 Med ({current.sev3})</div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}><div style={{ width: 8, height: 8, borderRadius: '50%', background: 'var(--accent-cyan)' }}></div> SEV4 Low ({current.sev4})</div>
       </div>
       
       <div style={{ flex: 1, minHeight: 0 }}>
