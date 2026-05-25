@@ -11,15 +11,24 @@ const Incidents = () => {
   const [loading, setLoading] = useState(true);
   const [triggering, setTriggering] = useState(false);
 
+  const ACTIVE_STATUSES = new Set(['Investigating', 'Open', 'Pending', 'Triggered', 'Escalated']);
+
+  const fetchApprovals = () =>
+    fetch(`/api/approvals?mode=${mode}`)
+      .then(res => res.json())
+      .then(data => setApprovals(data))
+      .catch(err => console.error("Failed to fetch approvals", err));
+
   useEffect(() => {
     Promise.all([
       fetch(`/api/incidents?mode=${mode}`).then(res => res.json()),
       fetch(`/api/approvals?mode=${mode}`).then(res => res.json())
     ])
     .then(([incData, appData]) => {
-      setIncidents(incData);
+      const active = incData.filter(i => ACTIVE_STATUSES.has(i.status));
+      setIncidents(active);
       setApprovals(appData);
-      if (incData.length > 0) setSelected(incData[0]);
+      if (active.length > 0) setSelected(active[0]);
       setLoading(false);
     })
       .catch(err => {
@@ -27,6 +36,13 @@ const Incidents = () => {
         setLoading(false);
       });
   }, []);
+
+  // Poll approvals every 8s while any selected incident is actively being investigated
+  useEffect(() => {
+    if (!selected || !ACTIVE_STATUSES.has(selected.status)) return;
+    const timer = setInterval(fetchApprovals, 8000);
+    return () => clearInterval(timer);
+  }, [selected?.incidentId, selected?.status]);
 
   const handleAction = (approvalId, status) => {
     fetch(`/api/approvals/${approvalId}/action?mode=${mode}`, {
@@ -83,7 +99,13 @@ const Incidents = () => {
   }, [selected]);
 
   if (loading) return <div style={{ padding: '2rem' }}>Loading incidents from DynamoDB...</div>;
-  if (incidents.length === 0) return <div style={{ padding: '2rem', color: 'var(--status-ok)' }}>No active incidents found!</div>;
+  if (incidents.length === 0) return (
+    <div style={{ padding: '2rem', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '60vh', gap: '1rem', color: 'var(--status-ok)' }}>
+      <Activity size={48} />
+      <h2 style={{ fontSize: '1.4rem', fontWeight: 600 }}>All Systems Healthy</h2>
+      <p style={{ color: 'var(--text-secondary)', fontSize: '0.9rem' }}>No active incidents. The Connect platform is operating normally.</p>
+    </div>
+  );
 
   const selectedApprovals = approvals.filter(a => a.incidentId === selected?.incidentId);
   return (
@@ -233,7 +255,9 @@ const Incidents = () => {
               {selectedApprovals.length === 0 ? (
                 <div style={{ background: 'rgba(0, 255, 128, 0.05)', padding: '1.25rem', borderRadius: '8px', border: '1px solid rgba(0, 255, 128, 0.2)' }}>
                   <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
-                    The Agent Swarm is currently evaluating the root cause. If a safe remediation path is found, it will generate a ticket here for human approval.
+                    {selected?.status === 'Investigating'
+                      ? 'The Agent Swarm is evaluating the root cause. If a safe remediation path is found, it will generate a ticket here for human approval.'
+                      : 'No remediation action required for this incident.'}
                   </p>
                 </div>
               ) : (

@@ -750,6 +750,7 @@ Resources:
                   - connect:DescribePrompt
                   - connect:ListBots
                   - connect:ListLambdaFunctions
+                  - connect:GetCurrentMetricData
                   - cloudwatch:DescribeAlarms
                   - cloudwatch:GetMetricData
                   - cloudwatch:GetMetricStatistics

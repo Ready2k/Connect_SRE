@@ -32,15 +32,14 @@ def _get_gemini_agent():
     )
 
     capabilities = types.CapabilitiesConfig(enable_subagents=True)
-    tools_config = types.ToolsConfig(enabled_tools=[
-        query_topology, calculate_blast_radius, query_recent_mutations,
-        fetch_runbook, propose_remediation, query_connect_metrics,
-        query_cloudwatch_flow_logs,
-    ])
     config = LocalAgentConfig(
-        system_instruction=SUPERVISOR_SYSTEM_INSTRUCTION,
+        system_instructions=SUPERVISOR_SYSTEM_INSTRUCTION,
         capabilities=capabilities,
-        tools=tools_config,
+        tools=[
+            query_topology, calculate_blast_radius, query_recent_mutations,
+            fetch_runbook, propose_remediation, query_connect_metrics,
+            query_cloudwatch_flow_logs,
+        ],
     )
     return Agent(config)
 

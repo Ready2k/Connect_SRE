@@ -660,6 +660,146 @@ Resources:
                   - kms:ScheduleKeyDeletion
                 Resource: '*'
 
+  AgentRuntimeTaskRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub '${EnvironmentName}-connect-sre-runtime-task-role'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ecs-tasks.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: runtime-read-state-models
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Sid: StateTables
+                Effect: Allow
+                Action:
+                  - dynamodb:GetItem
+                  - dynamodb:PutItem
+                  - dynamodb:UpdateItem
+                  - dynamodb:Query
+                  - dynamodb:Scan
+                Resource:
+                  - !GetAtt IncidentTable.Arn
+                  - !Sub '${IncidentTable.Arn}/index/*'
+                  - !GetAtt ApprovalTable.Arn
+                  - !Sub '${ApprovalTable.Arn}/index/*'
+                  - !GetAtt AgentRunTable.Arn
+                  - !Sub '${AgentRunTable.Arn}/index/*'
+                  - !GetAtt PolicyConfigTable.Arn
+                  - !GetAtt ToolRegistryTable.Arn
+                  - !GetAtt ModelConfigTable.Arn
+                  - !GetAtt TopologyTable.Arn
+                  - !Sub '${TopologyTable.Arn}/index/*'
+                  - !GetAtt JourneyTable.Arn
+                  - !Sub '${JourneyTable.Arn}/index/*'
+                  - !GetAtt IncidentDigestTable.Arn
+                  - !Sub '${IncidentDigestTable.Arn}/index/*'
+              - Sid: Buckets
+                Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:PutObject
+                  - s3:ListBucket
+                Resource:
+                  - !GetAtt EvidenceBucket.Arn
+                  - !Sub '${EvidenceBucket.Arn}/*'
+                  - !GetAtt RunbookBucket.Arn
+                  - !Sub '${RunbookBucket.Arn}/*'
+                  - !GetAtt TopologySnapshotBucket.Arn
+                  - !Sub '${TopologySnapshotBucket.Arn}/*'
+                  - !GetAtt AgentTraceBucket.Arn
+                  - !Sub '${AgentTraceBucket.Arn}/*'
+              - Sid: ConnectAndTelemetryRead
+                Effect: Allow
+                Action:
+                  - connect:ListInstances
+                  - connect:DescribeInstance
+                  - connect:ListContactFlows
+                  - connect:DescribeContactFlow
+                  - connect:ListContactFlowModules
+                  - connect:DescribeContactFlowModule
+                  - connect:ListQueues
+                  - connect:DescribeQueue
+                  - connect:ListRoutingProfiles
+                  - connect:DescribeRoutingProfile
+                  - connect:ListUsers
+                  - connect:DescribeUser
+                  - connect:ListHoursOfOperations
+                  - connect:DescribeHoursOfOperation
+                  - connect:ListPhoneNumbersV2
+                  - connect:DescribePhoneNumber
+                  - connect:ListQuickConnects
+                  - connect:DescribeQuickConnect
+                  - connect:ListSecurityProfiles
+                  - connect:DescribeSecurityProfile
+                  - connect:ListPrompts
+                  - connect:DescribePrompt
+                  - connect:ListBots
+                  - connect:ListLambdaFunctions
+                  - connect:GetCurrentMetricData
+                  - cloudwatch:DescribeAlarms
+                  - cloudwatch:GetMetricData
+                  - cloudwatch:GetMetricStatistics
+                  - logs:StartQuery
+                  - logs:GetQueryResults
+                  - logs:DescribeLogGroups
+                  - logs:DescribeLogStreams
+                  - logs:FilterLogEvents
+                  - cloudtrail:LookupEvents
+                  - lex:ListBots
+                  - lex:ListBotAliases
+                  - lex:DescribeBot
+                  - lex:DescribeBotAlias
+                  - lambda:GetFunction
+                  - lambda:GetFunctionConfiguration
+                  - lambda:ListAliases
+                  - lambda:ListVersionsByFunction
+                  - servicequotas:GetServiceQuota
+                  - servicequotas:ListServiceQuotas
+                  - health:DescribeEvents
+                  - health:DescribeEventDetails
+                Resource: '*'
+              - Sid: BedrockInvokeIfConfigured
+                Effect: Allow
+                Action:
+                  - bedrock:InvokeModel
+                  - bedrock:InvokeModelWithResponseStream
+                Resource: '*'
+              - Sid: SecretsForModelProviders
+                Effect: Allow
+                Action:
+                  - secretsmanager:GetSecretValue
+                Resource: '*'
+              - Sid: KmsUse
+                Effect: Allow
+                Action:
+                  - kms:Encrypt
+                  - kms:Decrypt
+                  - kms:GenerateDataKey
+                Resource: !GetAtt ConnectSreKmsKey.Arn
+              - Sid: ExplicitDenyWritesFromRuntime
+                Effect: Deny
+                Action:
+                  - connect:Create*
+                  - connect:Update*
+                  - connect:Delete*
+                  - connect:Associate*
+                  - connect:Disassociate*
+                  - lex:Create*
+                  - lex:Update*
+                  - lex:Delete*
+                  - lambda:Update*
+                  - lambda:Delete*
+                  - iam:Put*
+                  - iam:Delete*
+                Resource: '*'
+
   NormalizerLogGroup:
     Type: AWS::Logs::LogGroup
     Properties:
