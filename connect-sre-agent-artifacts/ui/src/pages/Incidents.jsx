@@ -1,7 +1,9 @@
 import { useState, useEffect } from 'react';
+import { useAppContext } from '../context/AppContext';
 import { Clock, Eye, Activity } from 'lucide-react';
 
 const Incidents = () => {
+  const { mode } = useAppContext();
   const [incidents, setIncidents] = useState([]);
   const [approvals, setApprovals] = useState([]);
   const [traces, setTraces] = useState([]);
@@ -11,8 +13,8 @@ const Incidents = () => {
 
   useEffect(() => {
     Promise.all([
-      fetch('/api/incidents').then(res => res.json()),
-      fetch('/api/approvals').then(res => res.json())
+      fetch(`/api/incidents?mode=${mode}`).then(res => res.json()),
+      fetch(`/api/approvals?mode=${mode}`).then(res => res.json())
     ])
     .then(([incData, appData]) => {
       setIncidents(incData);
@@ -27,7 +29,7 @@ const Incidents = () => {
   }, []);
 
   const handleAction = (approvalId, status) => {
-    fetch(`/api/approvals/${approvalId}/action`, {
+    fetch(`/api/approvals/${approvalId}/action?mode=${mode}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ status, justification: "Actioned via Incident Page" })
@@ -40,7 +42,7 @@ const Incidents = () => {
 
   const handleTriggerAgent = (incidentId) => {
     setTriggering(true);
-    fetch(`/api/incidents/${incidentId}/trigger`, {
+    fetch(`/api/incidents/${incidentId}/trigger?mode=${mode}`, {
       method: 'POST'
     })
     .then(res => res.json())
@@ -68,7 +70,7 @@ const Incidents = () => {
   };
 
   const fetchTraces = (incidentId) => {
-    fetch(`/api/incidents/${incidentId}/traces`)
+    fetch(`/api/incidents/${incidentId}/traces?mode=${mode}`)
       .then(res => res.json())
       .then(data => setTraces(data))
       .catch(err => console.error("Failed to fetch traces", err));

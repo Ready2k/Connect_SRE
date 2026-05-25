@@ -1,13 +1,15 @@
 import { useState, useEffect } from 'react';
 import { BookOpen, FileText } from 'lucide-react';
+import { useAppContext } from '../context/AppContext';
 
 const Runbooks = () => {
+  const { mode } = useAppContext();
   const [runbooks, setRunbooks] = useState([]);
   const [selected, setSelected] = useState(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    fetch('/api/runbooks')
+    fetch(`/api/runbooks?mode=${mode}`)
       .then(res => res.json())
       .then(data => {
         setRunbooks(data);

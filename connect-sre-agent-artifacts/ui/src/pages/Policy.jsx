@@ -1,12 +1,14 @@
 import { useState, useEffect } from 'react';
 import { ShieldAlert, Info } from 'lucide-react';
+import { useAppContext } from '../context/AppContext';
 
 const Policy = () => {
+  const { mode } = useAppContext();
   const [policies, setPolicies] = useState([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    fetch('/api/policy')
+    fetch(`/api/policy?mode=${mode}`)
       .then(res => res.json())
       .then(data => {
         setPolicies(data);

@@ -1,11 +1,13 @@
 import { useState, useEffect } from 'react';
+import { useAppContext } from '../../context/AppContext';
 
 const PendingApprovals = () => {
+  const { mode } = useAppContext();
   const [approvals, setApprovals] = useState([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    fetch('/api/approvals')
+    fetch(`/api/approvals?mode=${mode}`)
       .then(res => res.json())
       .then(data => {
         setApprovals(data);
@@ -18,7 +20,7 @@ const PendingApprovals = () => {
   }, []);
 
   const handleAction = (approvalId, status) => {
-    fetch(`/api/approvals/${approvalId}/action`, {
+    fetch(`/api/approvals/${approvalId}/action?mode=${mode}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ status, justification: "Actioned via UI" })

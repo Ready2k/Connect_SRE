@@ -1,12 +1,14 @@
 import { useState, useEffect } from 'react';
 import { Wrench, CheckCircle, Lock } from 'lucide-react';
+import { useAppContext } from '../context/AppContext';
 
 const ToolRegistry = () => {
+  const { mode } = useAppContext();
   const [tools, setTools] = useState([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    fetch('/api/tools')
+    fetch(`/api/tools?mode=${mode}`)
       .then(res => res.json())
       .then(data => {
         setTools(data);

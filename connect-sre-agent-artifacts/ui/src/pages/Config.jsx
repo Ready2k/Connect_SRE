@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { Shield, Cpu, Info } from 'lucide-react';
+import { useAppContext } from '../context/AppContext';
 
 const GEMINI_MODELS = [
   { value: 'gemini-3.5-flash', label: 'Gemini 3.5 Flash (recommended)' },
@@ -18,6 +19,7 @@ const ALL_MODELS = [...GEMINI_MODELS, ...BEDROCK_MODELS];
 const isBedrockModel = (id) => id && (id.startsWith('anthropic.') || id.includes('.anthropic.'));
 
 const Config = () => {
+  const { mode } = useAppContext();
   const [agentMode, setAgentMode]       = useState('recommend_only');
   const [primaryModel, setPrimaryModel] = useState('');
   const [fallbackModel, setFallbackModel] = useState('');
@@ -26,7 +28,7 @@ const Config = () => {
   const [loading, setLoading]           = useState(true);
 
   useEffect(() => {
-    fetch('/api/models/config')
+    fetch(`/api/models/config?mode=${mode}`)
       .then(res => res.json())
       .then(data => {
         setAgentMode(data.agentMode || 'recommend_only');
@@ -42,7 +44,7 @@ const Config = () => {
 
   const handleSave = () => {
     setSaveStatus('saving');
-    fetch('/api/models/config', {
+    fetch(`/api/models/config?mode=${mode}`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ agentMode, primaryModel, fallbackModel }),

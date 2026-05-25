@@ -162,7 +162,7 @@ const InstanceOverview = () => {
 
   const fetchOverview = () => {
     setLoading(true);
-    fetch('/api/instances/overview')
+    fetch(`/api/instances/overview?mode=${mode}`)
       .then(res => {
         if (!res.ok) throw new Error(`API returned ${res.status}`);
         return res.json();

@@ -158,7 +158,28 @@ async def receive_incident(payload: IncidentPayload, background_tasks: Backgroun
     }
 
 @app.get("/api/incidents")
-async def get_incidents():
+async def get_incidents(mode: str = Query("demo")):
+    if mode == "demo":
+        return [
+            {
+                "incidentId": "INC-DEMO-001",
+                "status": "Healthy",
+                "createdAt": "2026-05-25T12:00:00Z",
+                "source": "CloudWatch Alarm",
+                "severity": "SEV1",
+                "title": "Lex Bot Failure Rate High",
+                "description": "High rate of fallback intents observed in Main_Routing."
+            },
+            {
+                "incidentId": "INC-DEMO-002",
+                "status": "Investigating",
+                "createdAt": "2026-05-25T14:30:00Z",
+                "source": "Connect Contact Lens",
+                "severity": "SEV2",
+                "title": "Customer Sentiment Drop",
+                "description": "Average customer sentiment dropped below 0.2 in Billing."
+            }
+        ]
     try:
         table = dynamodb.Table(INCIDENT_TABLE)
         response = table.scan(Limit=50)
@@ -171,7 +192,9 @@ async def get_incidents():
         return []
 
 @app.post("/api/incidents/{incident_id}/trigger")
-async def trigger_agent_for_incident(incident_id: str):
+async def trigger_agent_for_incident(incident_id: str, mode: str = Query("demo")):
+    if mode == "demo":
+        return {"status": "success", "message": "Demo agent triggered."}
     try:
         table = dynamodb.Table(INCIDENT_TABLE)
         response = table.get_item(Key={'incidentId': incident_id})
@@ -244,7 +267,24 @@ async def trigger_agent_for_incident(incident_id: str):
         return {"status": "error", "message": str(e)}
 
 @app.get("/api/incidents/{incident_id}/traces")
-async def get_incident_traces(incident_id: str):
+async def get_incident_traces(incident_id: str, mode: str = Query("demo")):
+    if mode == "demo":
+        return [
+            {
+                "runId": "run-demo-xyz",
+                "incidentId": incident_id,
+                "agentName": "SupervisorAgent",
+                "startedAt": "2026-05-25T14:31:00Z",
+                "latencyMs": 1200,
+                "modelId": "Gemini 2.5 Flash",
+                "toolCalls": ["query_topology", "query_cloudwatch_flow_logs"],
+                "status": "success",
+                "thoughtProcess": "Investigating the sentiment drop. Checking flow logs...",
+                "inputTokenCount": 500,
+                "outputTokenCount": 150,
+                "costEstimate": "$0.002"
+            }
+        ]
     try:
         table = dynamodb.Table(TRACE_TABLE_NAME)
         # Using scan for MVP since we don't have a GSI on incidentId
@@ -368,7 +408,18 @@ async def get_topology(
         return {"nodes": [], "edges": [], "source": "error"}
 
 @app.get("/api/approvals")
-async def get_approvals():
+async def get_approvals(mode: str = Query("demo")):
+    if mode == "demo":
+        return [
+            {
+                "approvalId": "APP-DEMO-001",
+                "incidentId": "INC-DEMO-002",
+                "status": "PENDING",
+                "createdAt": "2026-05-25T14:35:00Z",
+                "actionType": "Update Lex Bot Alias",
+                "resourceId": "SalesBot_V2"
+            }
+        ]
     try:
         table = dynamodb.Table(APPROVAL_TABLE)
         response = table.scan()
@@ -378,7 +429,9 @@ async def get_approvals():
         return []
 
 @app.post("/api/approvals/{approval_id}/action")
-async def action_approval(approval_id: str, payload: dict):
+async def action_approval(approval_id: str, payload: dict, mode: str = Query("demo")):
+    if mode == "demo":
+        return {"status": "success", "approvalId": approval_id, "newStatus": payload.get("status", "REJECTED")}
     try:
         table = dynamodb.Table(APPROVAL_TABLE)
         status = payload.get("status", "REJECTED")
@@ -395,7 +448,12 @@ async def action_approval(approval_id: str, payload: dict):
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/api/journeys")
-async def get_journeys():
+async def get_journeys(mode: str = Query("demo")):
+    if mode == "demo":
+        return [
+            {"journeyId": "J-001", "name": "Main Sales Flow", "criticality": "High", "status": "Healthy"},
+            {"journeyId": "J-002", "name": "Support Escalation", "criticality": "Medium", "status": "Degraded"}
+        ]
     try:
         table = dynamodb.Table(JOURNEYS_TABLE)
         response = table.scan()
@@ -405,7 +463,12 @@ async def get_journeys():
         return []
 
 @app.get("/api/tools")
-async def get_tools():
+async def get_tools(mode: str = Query("demo")):
+    if mode == "demo":
+        return [
+            {"toolId": "query_topology", "status": "Active", "description": "Fetches active connect resources"},
+            {"toolId": "propose_remediation", "status": "Active", "description": "Generates approval ticket"}
+        ]
     try:
         table = dynamodb.Table(TOOLS_TABLE)
         response = table.scan()
@@ -415,7 +478,11 @@ async def get_tools():
         return []
 
 @app.get("/api/policy")
-async def get_policy():
+async def get_policy(mode: str = Query("demo")):
+    if mode == "demo":
+        return [
+            {"policyId": "POL-001", "name": "Require Human Approval for Routing Changes", "status": "Enforced"}
+        ]
     try:
         table = dynamodb.Table(POLICY_TABLE)
         response = table.scan()
@@ -425,7 +492,11 @@ async def get_policy():
         return []
 
 @app.get("/api/runbooks")
-async def get_runbooks():
+async def get_runbooks(mode: str = Query("demo")):
+    if mode == "demo":
+        return [
+            {"key": "Runbook_Lex_Timeout.md", "size": 1024, "lastModified": "2026-05-25T10:00:00Z"}
+        ]
     try:
         response = s3_client.list_objects_v2(Bucket=RUNBOOKS_BUCKET)
         items = []
@@ -453,7 +524,9 @@ async def get_runbooks():
         return []
 
 @app.get("/api/models/config")
-async def get_model_config():
+async def get_model_config(mode: str = Query("demo")):
+    if mode == "demo":
+        return {"agentMode": "recommend_only", "primaryModel": "anthropic.claude-3-7-sonnet", "fallbackModel": "gemini-3.5-flash"}
     return _model_config
 
 @app.patch("/api/models/config")
@@ -463,7 +536,13 @@ async def update_model_config(payload: ModelConfigPayload):
     return {"status": "saved", "config": _model_config}
 
 @app.get("/api/logs")
-async def get_system_logs():
+async def get_system_logs(mode: str = Query("demo")):
+    if mode == "demo":
+        return [
+            { "time": "2026-05-25T14:32:01Z", "source": "EventBridge", "type": "Ingest", "details": "Received CW Metric Alarm", "status": "Success" },
+            { "time": "2026-05-25T14:32:05Z", "source": "TopologyAgent", "type": "Query", "details": "Walk topology from ContactFlow_v4", "status": "Success" },
+            { "time": "2026-05-25T14:32:45Z", "source": "PolicyEngine", "type": "Evaluate", "details": "Check rollback safety", "status": "Approved" }
+        ]
     """
     Generate dynamic system logs based on traces and incident states.
     """
@@ -502,11 +581,24 @@ async def get_system_logs():
     return logs
 
 @app.get("/api/agents/status")
-async def get_agents_status():
+async def get_agents_status(mode: str = Query("demo")):
     """
     Returns the dynamic status of the Antigravity Agent Swarm.
     Checks if there are active investigations.
     """
+    if mode == "demo":
+        return {
+          "supervisor": {
+            "id": "supervisor", "name": "Connect Supervisor Agent", "status": "Investigating",
+            "health": "100%", "model": _ACTIVE_MODEL_LABEL, "tasks": 12, "purpose": "Demo Mode Orchestration"
+          },
+          "specialists": [
+            {
+              "id": "flow", "name": "Flow Health Agent", "status": "Investigating",
+              "health": "100%", "model": _ACTIVE_MODEL_LABEL, "tasks": 4, "purpose": "Demo Diagnostic"
+            }
+          ]
+        }
     status_label = "Idle"
     try:
         table = dynamodb.Table(INCIDENT_TABLE)

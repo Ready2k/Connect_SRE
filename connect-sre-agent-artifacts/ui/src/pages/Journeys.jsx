@@ -1,12 +1,14 @@
 import { useState, useEffect } from 'react';
 import { Route, CheckCircle, AlertTriangle, PhoneCall } from 'lucide-react';
+import { useAppContext } from '../context/AppContext';
 
 const Journeys = () => {
+  const { mode } = useAppContext();
   const [journeys, setJourneys] = useState([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    fetch('/api/journeys')
+    fetch(`/api/journeys?mode=${mode}`)
       .then(res => res.json())
       .then(data => {
         // If data is empty from DynamoDB, maybe default to some placeholder or empty state

@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import ReactFlow, { Background, Controls } from 'reactflow';
 import 'reactflow/dist/style.css';
 import { Bot, Activity, BrainCircuit, Settings, Save } from 'lucide-react';
+import { useAppContext } from '../context/AppContext';
 
 const initialNodes = [
   { id: 'supervisor', type: 'default', position: { x: 350, y: 50 }, data: { label: 'Connect Supervisor Agent' }, style: { background: 'var(--bg-secondary)', color: 'var(--text-primary)', border: '2px solid var(--accent-cyan)', borderRadius: '8px', padding: '10px 20px', fontWeight: 'bold' } },
@@ -15,6 +16,7 @@ const initialEdges = [
 ];
 
 const Agents = () => {
+  const { mode } = useAppContext();
   const [agentDetails, setAgentDetails] = useState(null);
   const [selectedAgent, setSelectedAgent] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -22,7 +24,7 @@ const Agents = () => {
   const [savingConfig, setSavingConfig] = useState(false);
 
   useEffect(() => {
-    fetch('/api/agents/status')
+    fetch(`/api/agents/status?mode=${mode}`)
       .then(res => res.json())
       .then(data => {
         // Map the payload to a dictionary for easy lookup
@@ -59,7 +61,7 @@ const Agents = () => {
   const handleSaveConfig = async () => {
     setSavingConfig(true);
     try {
-      await fetch('/api/agents/config', {
+      await fetch(`/api/agents/config?mode=${mode}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

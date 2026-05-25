@@ -1,11 +1,13 @@
 import { useState, useEffect } from 'react';
 import { FileText } from 'lucide-react';
+import { useAppContext } from '../context/AppContext';
 
 const Logs = () => {
+  const { mode } = useAppContext();
   const [logData, setLogData] = useState([]);
 
   useEffect(() => {
-    fetch('/api/logs')
+    fetch(`/api/logs?mode=${mode}`)
       .then(res => res.json())
       .then(data => setLogData(data))
       .catch(err => console.error(err));
