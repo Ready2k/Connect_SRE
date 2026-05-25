@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useRef, useMemo } from 'react';
 import ReactFlow, { Background, Controls } from 'reactflow';
 import 'reactflow/dist/style.css';
 import { Bot, Activity, BrainCircuit, Settings, Save } from 'lucide-react';
@@ -15,8 +15,11 @@ function buildGraph(supervisor, specialists) {
   const totalWidth = totalCols * NODE_W + (totalCols - 1) * NODE_GAP_X;
   const supervisorX = totalWidth / 2 - NODE_W / 2;
 
-  const statusBorder = (status) =>
-    status === 'Investigating' ? 'var(--status-warn)' : 'var(--border-glass)';
+  const statusBorder = (status) => {
+    if (status === 'Active' || status === 'Investigating') return 'var(--status-warn)';
+    if (status === 'Complete') return 'var(--status-ok)';
+    return 'var(--border-glass)';
+  };
 
   const nodes = [
     {
@@ -49,8 +52,8 @@ function buildGraph(supervisor, specialists) {
     id: `e-supervisor-${spec.id}`,
     source: 'supervisor',
     target: spec.id,
-    animated: spec.status === 'Investigating',
-    style: { stroke: spec.status === 'Investigating' ? 'var(--status-warn)' : 'var(--border-glass)' },
+    animated: spec.status === 'Active' || spec.status === 'Investigating',
+    style: { stroke: (spec.status === 'Active' || spec.status === 'Investigating') ? 'var(--status-warn)' : spec.status === 'Complete' ? 'var(--status-ok)' : 'var(--border-glass)' },
   }));
 
   return { nodes, edges };
@@ -71,8 +74,9 @@ const Agents = () => {
     iamExecutionRole: ''
   });
   const [savingConfig, setSavingConfig] = useState(false);
+  const selectedAgentIdRef = useRef('supervisor');
 
-  useEffect(() => {
+  const fetchAgentStatus = () =>
     fetch(`/api/agents/status?mode=${mode}`)
       .then(res => res.json())
       .then(data => {
@@ -80,7 +84,11 @@ const Agents = () => {
         data.specialists.forEach(spec => { details[spec.id] = spec; });
         setAgentDetails(details);
         setProvider(data.provider || '');
-        setSelectedAgent(data.supervisor);
+        // Keep selected agent in sync without resetting the selection on every poll
+        setSelectedAgent(prev => {
+          const id = prev?.id || selectedAgentIdRef.current;
+          return details[id] || data.supervisor;
+        });
         setGraphData(buildGraph(data.supervisor, data.specialists));
         setLoading(false);
       })
@@ -89,18 +97,21 @@ const Agents = () => {
         setLoading(false);
       });
 
+  useEffect(() => {
+    fetchAgentStatus();
+
     fetch('/api/agents/config')
       .then(res => res.json())
-      .then(data => {
-        if (!data.error) {
-          setConfig(data);
-        }
-      })
+      .then(data => { if (!data.error) setConfig(data); })
       .catch(err => console.error("Failed to fetch agent config", err));
+
+    const timer = setInterval(fetchAgentStatus, 4000);
+    return () => clearInterval(timer);
   }, []);
 
   const onNodeClick = (event, node) => {
     if (agentDetails) {
+      selectedAgentIdRef.current = node.id;
       setSelectedAgent(agentDetails[node.id] || agentDetails['supervisor']);
     }
   };
@@ -166,8 +177,17 @@ const Agents = () => {
             <div style={{ display: 'flex', gap: '2rem' }}>
               <div>
                 <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>Current Status</div>
-                <div style={{ display: 'inline-flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.85rem', fontWeight: 600, color: 'var(--accent-blue)' }}>
-                  <Activity size={16} /> {selectedAgent.status}
+                <div style={{ display: 'inline-flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.85rem', fontWeight: 600,
+                  color: selectedAgent.status === 'Active' || selectedAgent.status === 'Investigating' ? 'var(--status-warn)'
+                       : selectedAgent.status === 'Complete' ? 'var(--status-ok)'
+                       : 'var(--text-secondary)'
+                }}>
+                  {(selectedAgent.status === 'Active' || selectedAgent.status === 'Investigating') && (
+                    <span style={{ width: 8, height: 8, borderRadius: '50%', background: 'var(--status-warn)', animation: 'pulse 1.4s ease-in-out infinite', flexShrink: 0 }} />
+                  )}
+                  {selectedAgent.status === 'Complete' && <Activity size={16} />}
+                  {selectedAgent.status === 'Idle' && <Activity size={16} />}
+                  {selectedAgent.status}
                 </div>
               </div>
               <div>

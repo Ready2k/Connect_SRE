@@ -38,6 +38,10 @@ TRACE_TABLE_NAME = os.environ.get("AGENT_RUNS_TABLE_NAME", "dev-connect-sre-agen
 
 s3_client = boto3.client("s3", region_name=os.environ.get("AWS_REGION", os.environ.get("AWS_DEFAULT_REGION", "us-west-2")))
 
+def is_active_incident(item: dict) -> bool:
+    status = item.get("status", "").lower()
+    return status in ("investigating", "open", "pending", "triggered", "escalated", "failed", "failed - rate limited")
+
 # In-memory investigation step store: incidentId -> list of step dicts.
 # Steps are appended in real-time during investigation so the UI can poll them live.
 # Only the most recent _STEP_STORE_MAX investigations are retained.
@@ -224,7 +228,7 @@ async def get_instances_overview():
             # Filter incidents for this instance, or count all if no instanceId tag
             inst_incidents = [
                 i for i in inc_items
-                if i.get("instanceId", iid) == iid and i.get("status", "").lower() != "resolved"
+                if i.get("instanceId", iid) == iid and is_active_incident(i)
             ]
             critical = sum(1 for i in inst_incidents if i.get("severity", "").upper() in ("SEV1", "SEV2"))
             result.append({
@@ -810,44 +814,59 @@ async def get_agents_status(mode: str = Query("demo")):
             }
           ]
         }
-    status_label = "Idle"
-    supervisor_tasks = 0
-    specialist_counts: Dict[str, int] = {}
-    try:
-        inc_table = dynamodb.Table(INCIDENT_TABLE)
-        inc_resp = inc_table.scan(
-            FilterExpression=boto3.dynamodb.conditions.Attr('status').eq('Investigating')
-        )
-        if len(inc_resp.get('Items', [])) > 0:
-            status_label = "Investigating"
-    except Exception:
-        pass
-
-    try:
-        trace_table = dynamodb.Table(TRACE_TABLE_NAME)
-        trace_resp = trace_table.scan()
-        all_traces = trace_resp.get('Items', [])
-        supervisor_tasks = len(all_traces)
-        for trace in all_traces:
-            for tool_call in trace.get('toolCalls', []):
-                specialist_counts[tool_call] = specialist_counts.get(tool_call, 0) + 1
-    except Exception:
-        pass
-
-    specialist_status = status_label if status_label == "Investigating" else "Idle"
-
     _SPECIALISTS = [
-        ("flow",    "flow_health_specialist",        "Flow Health Agent",          "Diagnoses contact flow errors, broken blocks, and Lambda invocation failures."),
-        ("module",  "module_dependency_specialist",  "Module Dependency Agent",    "Finds all parent flows affected by a broken shared contact flow module."),
-        ("queue",   "queue_routing_specialist",       "Queue & Routing Agent",      "Diagnoses queue overflow, wait time spikes, and routing profile misconfigurations."),
-        ("lexa",    "lex_bot_specialist",             "Lex Bot Agent",              "Diagnoses Amazon Lex integration failures and intent recognition errors."),
-        ("aia",     "ai_assist_specialist",           "AI Assist Agent",            "Investigates Amazon Q in Connect and generative AI component failures."),
-        ("change",  "change_correlation_specialist",  "Change Correlation Agent",   "Identifies recent config mutations that may have triggered the incident."),
-        ("impact",  "customer_impact_specialist",     "Customer Impact Agent",      "Calculates blast radius: affected callers, queues, flows, and entry points."),
-        ("runbook", "runbook_specialist",             "Runbook Agent",              "Retrieves approved SOPs for a given outage type from the S3 runbook library."),
-        ("risk",    "risk_policy_specialist",         "Risk & Policy Agent",        "Validates planned actions against blast-radius limits and active policies."),
-        ("verify",  "verification_specialist",        "Verification Agent",         "Confirms alarms have cleared and error rates are normal after remediation."),
+        ("flow",    "FLOW",    "Flow Health Agent",          "Diagnoses contact flow errors, broken blocks, and Lambda invocation failures."),
+        ("module",  "MODULE",  "Module Dependency Agent",    "Finds all parent flows affected by a broken shared contact flow module."),
+        ("queue",   "QUEUE",   "Queue & Routing Agent",      "Diagnoses queue overflow, wait time spikes, and routing profile misconfigurations."),
+        ("lexa",    "LEXA",    "Lex Bot Agent",              "Diagnoses Amazon Lex integration failures and intent recognition errors."),
+        ("aia",     "AIA",     "AI Assist Agent",            "Investigates Amazon Q in Connect and generative AI component failures."),
+        ("change",  "CHANGE",  "Change Correlation Agent",   "Identifies recent config mutations that may have triggered the incident."),
+        ("impact",  "IMPACT",  "Customer Impact Agent",      "Calculates blast radius: affected callers, queues, flows, and entry points."),
+        ("runbook", "RUNBOOK", "Runbook Agent",              "Retrieves approved SOPs for a given outage type from the S3 runbook library."),
+        ("risk",    "RISK",    "Risk & Policy Agent",        "Validates planned actions against blast-radius limits and active policies."),
+        ("verify",  "VERIFY",  "Verification Agent",         "Confirms alarms have cleared and error rates are normal after remediation."),
     ]
+
+    # Find the most recent active investigation in _step_store
+    active_steps = []
+    for steps in reversed(list(_step_store.values())):
+        if steps and steps[-1].get("type") not in ("complete", "error"):
+            active_steps = steps
+            break
+
+    # Derive per-agent status from live step data
+    dispatched: set = set()
+    returned: set = set()
+    for step in active_steps:
+        if step.get("type") in ("specialist_call", "tool_call"):
+            dispatched.add(step.get("agent", ""))
+        elif step.get("type") in ("specialist_result", "tool_result"):
+            returned.add(step.get("agent", ""))
+
+    is_investigating = bool(active_steps)
+
+    # Fall back to DynamoDB scan if step store has no live data (e.g. after restart)
+    if not is_investigating:
+        try:
+            inc_resp = dynamodb.Table(INCIDENT_TABLE).scan(
+                FilterExpression=boto3.dynamodb.conditions.Attr('status').eq('Investigating')
+            )
+            is_investigating = len(inc_resp.get('Items', [])) > 0
+        except Exception:
+            pass
+
+    def _specialist_status(agent_key: str) -> str:
+        if agent_key in dispatched:
+            return "Active" if agent_key not in returned else "Complete"
+        return "Idle"
+
+    supervisor_tasks = 0
+    try:
+        supervisor_tasks = dynamodb.Table(TRACE_TABLE_NAME).scan(
+            Select="COUNT"
+        ).get("Count", 0)
+    except Exception:
+        pass
 
     provider_label = "AWS Strands (Bedrock)" if MODEL_PROVIDER == "bedrock" else "Google ADK (Gemini)"
     return {
@@ -855,7 +874,7 @@ async def get_agents_status(mode: str = Query("demo")):
       "supervisor": {
         "id": "supervisor",
         "name": "Connect Supervisor Agent",
-        "status": status_label,
+        "status": "Investigating" if is_investigating else "Idle",
         "health": "100%",
         "model": _ACTIVE_MODEL_LABEL,
         "tasks": supervisor_tasks,
@@ -865,13 +884,13 @@ async def get_agents_status(mode: str = Query("demo")):
         {
           "id": sid,
           "name": name,
-          "status": specialist_status,
+          "status": _specialist_status(agent_key),
           "health": "100%",
           "model": _ACTIVE_MODEL_LABEL,
-          "tasks": specialist_counts.get(tool_fn, 0),
+          "tasks": 0,
           "purpose": purpose,
         }
-        for sid, tool_fn, name, purpose in _SPECIALISTS
+        for sid, agent_key, name, purpose in _SPECIALISTS
       ]
     }
 
@@ -920,8 +939,8 @@ async def get_monitoring_metrics(
             # Still pull incidents from DynamoDB for SEV counts
             inc_table = dynamodb.Table(INCIDENT_TABLE)
             inc_items = inc_table.scan(Limit=100).get("Items", [])
-            open_sev1 = sum(1 for i in inc_items if i.get("status", "").lower() != "resolved" and i.get("severity", "").upper() == "SEV1")
-            open_sev2 = sum(1 for i in inc_items if i.get("status", "").lower() != "resolved" and i.get("severity", "").upper() == "SEV2")
+            open_sev1 = sum(1 for i in inc_items if is_active_incident(i) and i.get("severity", "").upper() == "SEV1")
+            open_sev2 = sum(1 for i in inc_items if is_active_incident(i) and i.get("severity", "").upper() == "SEV2")
 
             # Build a live-sourced response matching the same schema as demo
             uptime = 99.99 - (0.05 * open_sev1) - (0.01 * open_sev2)
@@ -968,13 +987,13 @@ async def get_monitoring_metrics(
         app_items = approvals_response.get('Items', [])
         
         # 2. Count active incidents by severity
-        # We classify open incidents as anything not having 'status' == 'Resolved'
+        # We classify open incidents as anything matching the active statuses list
         open_sev1 = 0
         open_sev2 = 0
         open_sev3 = 0
         open_sev4 = 0
         for item in inc_items:
-            if item.get('status', '').lower() != 'resolved':
+            if is_active_incident(item):
                 sev = item.get('severity', '').upper()
                 if sev == 'SEV1':
                     open_sev1 += 1
