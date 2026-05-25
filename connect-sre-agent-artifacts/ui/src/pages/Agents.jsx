@@ -23,7 +23,7 @@ const Agents = () => {
   const [config, setConfig] = useState({ 
     logGroupName: '', 
     defaultTimeWindowMinutes: 60,
-    contactFlowLogsLocation: '',
+    ctrLocation: '',
     assumeRoleArn: '',
     iamExecutionRole: ''
   });
@@ -73,7 +73,7 @@ const Agents = () => {
         body: JSON.stringify({
           logGroupName: config.logGroupName,
           defaultTimeWindowMinutes: parseInt(config.defaultTimeWindowMinutes, 10) || 60,
-          contactFlowLogsLocation: config.contactFlowLogsLocation,
+          ctrLocation: config.ctrLocation,
           assumeRoleArn: config.assumeRoleArn
         })
       });
@@ -160,15 +160,15 @@ const Agents = () => {
               />
             </div>
             <div>
-              <label style={{ display: 'block', fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: '0.3rem' }}>Contact Flow Logs Location</label>
+              <label style={{ display: 'block', fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: '0.3rem' }}>Trace Records (CTR) Location</label>
               <input 
                 type="text" 
-                value={config.contactFlowLogsLocation || ''} 
-                onChange={(e) => setConfig({...config, contactFlowLogsLocation: e.target.value})}
-                placeholder="s3://bucket-name/prefix/ or /aws/connect/flow-logs"
+                value={config.ctrLocation || ''} 
+                onChange={(e) => setConfig({...config, ctrLocation: e.target.value})}
+                placeholder="s3://bucket-name/prefix/ or Kinesis Data Stream"
                 style={{ width: '100%', padding: '0.5rem', borderRadius: '4px', border: '1px solid var(--border-glass)', background: 'rgba(0,0,0,0.2)', color: 'white' }}
               />
-              <p style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', margin: '0.2rem 0 0' }}>Where are the raw Connect flow traces stored? The agent will scan these to debug routing issues.</p>
+              <p style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', margin: '0.2rem 0 0' }}>Where are the raw Connect Trace Records stored? The agent will scan these to debug routing issues and gather metadata.</p>
             </div>
             <div>
               <label style={{ display: 'block', fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: '0.3rem' }}>Default Search Window (Minutes)</label>

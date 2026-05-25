@@ -35,6 +35,7 @@ from tools import (
     query_connect_metrics,
     query_recent_mutations,
     query_topology,
+    query_connect_ctrs
 )
 
 logger = logging.getLogger(__name__)
@@ -71,7 +72,7 @@ def build_strands_supervisor(model):
     queue_agent = Agent(
         model=model,
         system_prompt=QUEUE_ROUTING_PROMPT,
-        tools=[query_topology, query_connect_metrics],
+        tools=[query_topology, query_connect_metrics, query_connect_ctrs],
     )
 
     lex_agent = Agent(
@@ -267,6 +268,9 @@ def build_strands_supervisor(model):
             runbook_specialist,
             risk_policy_specialist,
             verification_specialist,
+            query_recent_mutations,
+            query_topology,
+            query_connect_ctrs,
             propose_remediation,
         ],
     )

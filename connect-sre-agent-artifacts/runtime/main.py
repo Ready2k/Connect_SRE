@@ -38,6 +38,21 @@ TRACE_TABLE_NAME = os.environ.get("AGENT_RUNS_TABLE_NAME", "dev-connect-sre-agen
 
 s3_client = boto3.client("s3", region_name=os.environ.get("AWS_REGION", os.environ.get("AWS_DEFAULT_REGION", "us-west-2")))
 
+# Lazily resolved AWS account ID (used in IAM ARN construction)
+_aws_account_id: Optional[str] = None
+
+def _get_account_id() -> str:
+    global _aws_account_id
+    if _aws_account_id is None:
+        try:
+            sts = boto3.client("sts", region_name=os.environ.get("AWS_REGION", "us-west-2"))
+            _aws_account_id = sts.get_caller_identity()["Account"]
+        except Exception as e:
+            logger.warning(f"Could not resolve AWS account ID: {e}")
+            _aws_account_id = "[account]"
+    return _aws_account_id
+
+
 class IncidentPayload(BaseModel):
     incidentId: str
     source: str
@@ -84,7 +99,7 @@ async def investigate_incident_background(payload: IncidentPayload):
     started_at = datetime.utcnow().isoformat() + "Z"
     start_time = time.time()
     try:
-        async with get_supervisor_agent() as supervisor:
+        async with get_supervisor_agent(_model_config.get("primaryModel")) as supervisor:
             prompt = (
                 f"A new critical incident has been detected in Amazon Connect.\n"
                 f"Incident ID: {payload.incidentId}\n"
@@ -216,7 +231,7 @@ async def get_incidents(mode: str = Query("demo")):
         return []
 
 @app.post("/api/incidents/{incident_id}/trigger")
-async def trigger_agent_for_incident(incident_id: str, mode: str = Query("demo")):
+async def trigger_agent_for_incident(incident_id: str, background_tasks: BackgroundTasks, mode: str = Query("demo")):
     if mode == "demo":
         return {"status": "success", "message": "Demo agent triggered."}
     try:
@@ -225,67 +240,26 @@ async def trigger_agent_for_incident(incident_id: str, mode: str = Query("demo")
         incident = response.get('Item')
         if not incident:
             raise HTTPException(status_code=404, detail="Incident not found")
-            
-        # Update incident status to investigating
+
         table.update_item(
             Key={'incidentId': incident_id},
             UpdateExpression="SET #s = :s",
             ExpressionAttributeNames={'#s': 'status'},
             ExpressionAttributeValues={':s': 'Investigating'}
         )
-        
-        # Write mock agent traces for demonstration
-        trace_table = dynamodb.Table(TRACE_TABLE_NAME)
-        now = datetime.utcnow()
-        mock_traces = [
-            {
-                "runId": f"run-{uuid.uuid4().hex[:8]}",
-                "incidentId": incident_id,
-                "agentName": "SupervisorAgent",
-                "startedAt": now.isoformat() + "Z",
-                "latencyMs": 850,
-                "modelId": _ACTIVE_MODEL_LABEL,
-                "toolCalls": ["query_topology"],
-                "status": "success",
-                "thoughtProcess": f"I see an incident {incident_id}. I need to determine the blast radius by querying the topology graph.",
-                "inputTokenCount": 1050,
-                "outputTokenCount": 150,
-                "costEstimate": "$0.0035"
-            },
-            {
-                "runId": f"run-{uuid.uuid4().hex[:8]}",
-                "incidentId": incident_id,
-                "agentName": "FlowHealthAgent",
-                "startedAt": (now + timedelta(seconds=1)).isoformat() + "Z",
-                "latencyMs": 4200,
-                "modelId": _ACTIVE_MODEL_LABEL,
-                "toolCalls": ["query_cloudwatch_flow_logs", "query_connect_metrics"],
-                "status": "success",
-                "thoughtProcess": "The topology shows the issue is in the 'Main_Routing' flow. I am querying CloudWatch logs and Connect metrics to verify the error rate. Found 5 fatal errors relating to Lex bot timeout.",
-                "inputTokenCount": 4500,
-                "outputTokenCount": 800,
-                "costEstimate": "$0.0150"
-            },
-            {
-                "runId": f"run-{uuid.uuid4().hex[:8]}",
-                "incidentId": incident_id,
-                "agentName": "SupervisorAgent",
-                "startedAt": (now + timedelta(seconds=6)).isoformat() + "Z",
-                "latencyMs": 1200,
-                "modelId": _ACTIVE_MODEL_LABEL,
-                "toolCalls": ["propose_remediation"],
-                "status": "success",
-                "thoughtProcess": "The root cause is a Lex integration timeout. I will propose a remediation to route calls to the emergency fallback queue while Lex is recovering.",
-                "inputTokenCount": 2100,
-                "outputTokenCount": 200,
-                "costEstimate": "$0.0080"
-            }
-        ]
-        
-        for trace in mock_traces:
-            trace_table.put_item(Item=trace)
 
-        return {"status": "success", "message": "Agent triggered."}
+        payload = IncidentPayload(
+            incidentId=incident_id,
+            source=incident.get("source", "manual-trigger"),
+            severity=incident.get("severity", "SEV3"),
+            title=incident.get("title", ""),
+            details=incident.get("description", ""),
+            metadata=incident.get("metadata", {}),
+        )
+        background_tasks.add_task(investigate_incident_background, payload)
+        return {"status": "success", "message": "Agent investigation started."}
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Failed to trigger agent: {e}")
         return {"status": "error", "message": str(e)}
@@ -346,16 +320,16 @@ async def get_agent_config():
         default_config = {
             "logGroupName": "/aws/connect/default",
             "defaultTimeWindowMinutes": 60,
-            "contactFlowLogsLocation": "s3://connect-contact-flow-logs/",
+            "ctrLocation": "s3://connect-ctr-bucket/",
             "assumeRoleArn": ""
         }
         
         if 'Item' in response:
             stored_config = response['Item'].get('config', {})
             # Merge with defaults to ensure all fields are present
-            return {**default_config, **stored_config, "iamExecutionRole": "arn:aws:iam::[account]:role/AgentRuntimeTaskRole"}
+            return {**default_config, **stored_config, "iamExecutionRole": f"arn:aws:iam::{_get_account_id()}:role/AgentRuntimeTaskRole"}
         else:
-            return {**default_config, "iamExecutionRole": "arn:aws:iam::[account]:role/AgentRuntimeTaskRole"}
+            return {**default_config, "iamExecutionRole": f"arn:aws:iam::{_get_account_id()}:role/AgentRuntimeTaskRole"}
     except Exception as e:
         logger.error(f"Failed to fetch agent config: {e}")
         return {"error": str(e)}
@@ -402,7 +376,26 @@ async def get_topology(
                                "data": {"label": f"Queue: {q.get('Name', 'Unnamed Queue')}"},
                                "position": {"x": 50 + (i % 5) * 200, "y": 280}})
 
-            logger.info(f"Live topology: {len(nodes)} nodes fetched for instance {instanceId}")
+            # Fetch edges from the DynamoDB topology table (written by topology_scanner Lambda).
+            # Edge rows use edgeTypeTarget = "DEPENDS_ON#<targetNodeId>" — these IDs match
+            # the Connect resource IDs used as node IDs above.
+            try:
+                topo_table = dynamodb.Table(TOPOLOGY_TABLE)
+                topo_resp = topo_table.scan()
+                for item in topo_resp.get('Items', []):
+                    et = item.get('edgeTypeTarget', '')
+                    if et.startswith('DEPENDS_ON#'):
+                        target = et.split('#', 1)[1]
+                        edges.append({
+                            "id": f"e-{item['nodeId']}-{target}",
+                            "source": item['nodeId'],
+                            "target": target,
+                            "animated": True
+                        })
+            except Exception as edge_err:
+                logger.warning(f"Could not fetch topology edges: {edge_err}")
+
+            logger.info(f"Live topology: {len(nodes)} nodes, {len(edges)} edges for instance {instanceId}")
             return {"nodes": nodes, "edges": edges, "source": "live"}
         except Exception as e:
             logger.warning(f"Live topology fetch failed, falling back to demo: {e}")
@@ -582,7 +575,7 @@ async def get_runbooks(mode: str = Query("demo")):
 @app.get("/api/models/config")
 async def get_model_config(mode: str = Query("demo")):
     if mode == "demo":
-        return {"agentMode": "recommend_only", "primaryModel": "anthropic.claude-3-7-sonnet", "fallbackModel": "gemini-3.5-flash"}
+        return {"agentMode": "recommend_only", "primaryModel": _ACTIVE_MODEL_LABEL, "fallbackModel": ""}
     return _model_config
 
 @app.patch("/api/models/config")
@@ -656,15 +649,43 @@ async def get_agents_status(mode: str = Query("demo")):
           ]
         }
     status_label = "Idle"
+    supervisor_tasks = 0
+    specialist_counts: Dict[str, int] = {}
     try:
-        table = dynamodb.Table(INCIDENT_TABLE)
-        response = table.scan(
+        inc_table = dynamodb.Table(INCIDENT_TABLE)
+        inc_resp = inc_table.scan(
             FilterExpression=boto3.dynamodb.conditions.Attr('status').eq('Investigating')
         )
-        if len(response.get('Items', [])) > 0:
+        if len(inc_resp.get('Items', [])) > 0:
             status_label = "Investigating"
     except Exception:
         pass
+
+    try:
+        trace_table = dynamodb.Table(TRACE_TABLE_NAME)
+        trace_resp = trace_table.scan()
+        all_traces = trace_resp.get('Items', [])
+        supervisor_tasks = len(all_traces)
+        for trace in all_traces:
+            for tool_call in trace.get('toolCalls', []):
+                specialist_counts[tool_call] = specialist_counts.get(tool_call, 0) + 1
+    except Exception:
+        pass
+
+    specialist_status = status_label if status_label == "Investigating" else "Idle"
+
+    _SPECIALISTS = [
+        ("flow",    "flow_health_specialist",        "Flow Health Agent",          "Diagnoses contact flow errors, broken blocks, and Lambda invocation failures."),
+        ("module",  "module_dependency_specialist",  "Module Dependency Agent",    "Finds all parent flows affected by a broken shared contact flow module."),
+        ("queue",   "queue_routing_specialist",       "Queue & Routing Agent",      "Diagnoses queue overflow, wait time spikes, and routing profile misconfigurations."),
+        ("lexa",    "lex_bot_specialist",             "Lex Bot Agent",              "Diagnoses Amazon Lex integration failures and intent recognition errors."),
+        ("aia",     "ai_assist_specialist",           "AI Assist Agent",            "Investigates Amazon Q in Connect and generative AI component failures."),
+        ("change",  "change_correlation_specialist",  "Change Correlation Agent",   "Identifies recent config mutations that may have triggered the incident."),
+        ("impact",  "customer_impact_specialist",     "Customer Impact Agent",      "Calculates blast radius: affected callers, queues, flows, and entry points."),
+        ("runbook", "runbook_specialist",             "Runbook Agent",              "Retrieves approved SOPs for a given outage type from the S3 runbook library."),
+        ("risk",    "risk_policy_specialist",         "Risk & Policy Agent",        "Validates planned actions against blast-radius limits and active policies."),
+        ("verify",  "verification_specialist",        "Verification Agent",         "Confirms alarms have cleared and error rates are normal after remediation."),
+    ]
 
     return {
       "supervisor": {
@@ -673,28 +694,20 @@ async def get_agents_status(mode: str = Query("demo")):
         "status": status_label,
         "health": "100%",
         "model": _ACTIVE_MODEL_LABEL,
-        "tasks": 12,
+        "tasks": supervisor_tasks,
         "purpose": "Owns the incident lifecycle, delegates tasks to specialists."
       },
       "specialists": [
         {
-          "id": "flow",
-          "name": "Flow Health Agent",
-          "status": status_label if status_label == "Investigating" else "Idle",
+          "id": sid,
+          "name": name,
+          "status": specialist_status,
           "health": "100%",
           "model": _ACTIVE_MODEL_LABEL,
-          "tasks": 4,
-          "purpose": "Diagnoses contact flow errors."
-        },
-        {
-          "id": "queue",
-          "name": "Queue & Routing Agent",
-          "status": "Analyzing",
-          "health": "98%",
-          "model": _ACTIVE_MODEL_LABEL,
-          "tasks": 1,
-          "purpose": "Diagnoses queue wait time."
+          "tasks": specialist_counts.get(tool_fn, 0),
+          "purpose": purpose,
         }
+        for sid, tool_fn, name, purpose in _SPECIALISTS
       ]
     }
 
