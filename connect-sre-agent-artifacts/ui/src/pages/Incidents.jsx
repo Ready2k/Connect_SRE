@@ -42,7 +42,14 @@ const Incidents = () => {
     setTriggering(true);
     fetch(`/api/incidents/${incidentId}/trigger`, {
       method: 'POST'
-    }).then(() => {
+    })
+    .then(res => res.json())
+    .then(data => {
+      if (data.status === 'error') {
+        alert("Failed to trigger agent: " + data.message);
+        setTriggering(false);
+        return;
+      }
       setIncidents(prev => prev.map(inc => 
         inc.incidentId === incidentId ? { ...inc, status: "Investigating" } : inc
       ));
@@ -53,6 +60,10 @@ const Incidents = () => {
         setTriggering(false);
         if (selected) fetchTraces(selected.incidentId);
       }, 1000);
+    })
+    .catch(err => {
+      alert("Network error: " + err);
+      setTriggering(false);
     });
   };
 
@@ -126,7 +137,7 @@ const Incidents = () => {
               onClick={() => handleTriggerAgent(selected.incidentId)}
               disabled={triggering}
               style={{ padding: '0.5rem 1rem', background: 'var(--accent-blue)', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 600 }}>
-              {triggering ? "Triggering..." : "Trigger ADK Analysis"}
+              {triggering ? "Triggering..." : "Trigger Agent Triage"}
             </button>
           </div>
 
