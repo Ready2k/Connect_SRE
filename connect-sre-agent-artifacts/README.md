@@ -16,3 +16,8 @@ This platform operates a **Multi-Agent System** using the Google Antigravity SDK
 * `/runtime` - The ADK Agent Engine. A FastAPI application running on ECS Fargate that hosts the Google Antigravity Supervisor Agent and custom tools.
 * `/ui` - The SRE Management Console. A React/Vite dashboard to view live topology, agent status, and approve pending remediations.
 * `/docs` - System documentation.
+
+## Demo vs Live Mode
+The UI contains a toggle in the top right corner to switch between **Demo** and **Live** modes:
+* **Live Mode**: The UI and FastAPI backend fetch real data from your DynamoDB tables and live AWS Connect resources.
+* **Demo Mode**: The backend intercepts requests and serves robust mock data for Incidents, Traces, Agents, Approvals, and Logs, allowing for safe UI exploration and demonstrations without requiring a populated AWS environment.

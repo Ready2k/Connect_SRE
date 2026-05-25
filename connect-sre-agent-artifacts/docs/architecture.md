@@ -11,6 +11,11 @@ The Connect SRE Agent is designed as a hybrid, event-driven multi-agent platform
 6. **Remediation**: The agent proposes a remediation action by writing to the Approval DynamoDB table.
 7. **Control Plane Execution**: Once approved via the UI, the `action_dispatcher.py` Lambda safely executes the remediation via SSM or native Connect APIs.
 
+## Demo vs Live Operation
+To facilitate demonstrations and safe exploration without requiring a fully populated AWS Connect environment, the system supports two operational modes:
+* **Live Mode**: The FastAPI backend routes all requests to the underlying DynamoDB tables (`dev-connect-sre-incidents`, `dev-connect-sre-approvals`, etc.) and real AWS APIs.
+* **Demo Mode**: The frontend appends `?mode=demo` to API requests. The backend intercepts these requests and immediately returns robust, hardcoded mock data for incidents, traces, agent status, and approvals, completely bypassing the AWS control plane.
+
 ## Infrastructure Map (AWS Option 2 - Developer Mode)
 The infrastructure uses a VPC with Public subnets to avoid NAT Gateway charges while remaining highly secure.
 

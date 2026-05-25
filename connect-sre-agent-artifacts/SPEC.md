@@ -11,7 +11,7 @@ The platform uses:
 - **Google ADK Python** for supervisor/specialist-agent orchestration
 - **AWS** for eventing, telemetry, storage, audit, and controlled remediation
 - **A pluggable model router** supporting Gemini, Amazon Bedrock, OpenAI-compatible endpoints, and mock/test providers
-- **A management console** for supervision, approvals, agent control, model routing, runbooks, topology, and audit
+- **A management console** for supervision, approvals, agent control, model routing, runbooks, topology, and audit. Features a **Demo Mode** for safe demonstration with mocked API responses.
 - **Deterministic policy gates** before any write action
 
 The central goal is to help teams detect, diagnose, explain, and safely recover Amazon Connect operational issues faster than standard dashboards and human grep archaeology. Humanity has suffered enough from manually reading flow logs at midnight.
