@@ -1,27 +1,70 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import ReactFlow, { Background, Controls } from 'reactflow';
 import 'reactflow/dist/style.css';
 import { Bot, Activity, BrainCircuit, Settings, Save } from 'lucide-react';
 import { useAppContext } from '../context/AppContext';
 
-const initialNodes = [
-  { id: 'supervisor', type: 'default', position: { x: 350, y: 50 }, data: { label: 'Connect Supervisor Agent' }, style: { background: 'var(--bg-secondary)', color: 'var(--text-primary)', border: '2px solid var(--accent-cyan)', borderRadius: '8px', padding: '10px 20px', fontWeight: 'bold' } },
-  { id: 'flow', position: { x: 50, y: 200 }, data: { label: 'Flow Health Agent' }, style: { background: 'transparent', color: 'var(--text-primary)', border: '1px solid var(--status-ok)', borderRadius: '8px', padding: '10px' } },
-  { id: 'queue', position: { x: 350, y: 200 }, data: { label: 'Queue & Routing' }, style: { background: 'rgba(255,255,255,0.05)', color: 'var(--text-primary)', border: '1px solid var(--status-warn)', borderRadius: '8px', padding: '10px' } },
-];
+const SPECIALIST_COLS = 5;
+const NODE_W = 160;
+const NODE_GAP_X = 20;
+const NODE_GAP_Y = 80;
+const ROW_Y = 200;
 
-const initialEdges = [
-  { id: 'e1-2', source: 'supervisor', target: 'flow', style: { stroke: 'var(--border-glass)' } },
-  { id: 'e1-3', source: 'supervisor', target: 'queue', animated: true, style: { stroke: 'var(--status-warn)' } },
-];
+function buildGraph(supervisor, specialists) {
+  const totalCols = SPECIALIST_COLS;
+  const totalWidth = totalCols * NODE_W + (totalCols - 1) * NODE_GAP_X;
+  const supervisorX = totalWidth / 2 - NODE_W / 2;
+
+  const statusBorder = (status) =>
+    status === 'Investigating' ? 'var(--status-warn)' : 'var(--border-glass)';
+
+  const nodes = [
+    {
+      id: 'supervisor',
+      position: { x: supervisorX, y: 30 },
+      data: { label: supervisor.name },
+      style: {
+        background: 'var(--bg-secondary)', color: 'var(--text-primary)',
+        border: '2px solid var(--accent-cyan)', borderRadius: '8px',
+        padding: '10px 20px', fontWeight: 'bold', width: NODE_W,
+      },
+    },
+    ...specialists.map((spec, i) => {
+      const col = i % totalCols;
+      const row = Math.floor(i / totalCols);
+      return {
+        id: spec.id,
+        position: { x: col * (NODE_W + NODE_GAP_X), y: ROW_Y + row * (40 + NODE_GAP_Y) },
+        data: { label: spec.name },
+        style: {
+          background: 'rgba(255,255,255,0.03)', color: 'var(--text-primary)',
+          border: `1px solid ${statusBorder(spec.status)}`, borderRadius: '8px',
+          padding: '8px', fontSize: '0.78rem', width: NODE_W,
+        },
+      };
+    }),
+  ];
+
+  const edges = specialists.map((spec) => ({
+    id: `e-supervisor-${spec.id}`,
+    source: 'supervisor',
+    target: spec.id,
+    animated: spec.status === 'Investigating',
+    style: { stroke: spec.status === 'Investigating' ? 'var(--status-warn)' : 'var(--border-glass)' },
+  }));
+
+  return { nodes, edges };
+}
 
 const Agents = () => {
   const { mode } = useAppContext();
   const [agentDetails, setAgentDetails] = useState(null);
+  const [provider, setProvider] = useState('');
   const [selectedAgent, setSelectedAgent] = useState(null);
   const [loading, setLoading] = useState(true);
-  const [config, setConfig] = useState({ 
-    logGroupName: '', 
+  const [graphData, setGraphData] = useState({ nodes: [], edges: [] });
+  const [config, setConfig] = useState({
+    logGroupName: '',
     defaultTimeWindowMinutes: 60,
     ctrLocation: '',
     assumeRoleArn: '',
@@ -33,14 +76,12 @@ const Agents = () => {
     fetch(`/api/agents/status?mode=${mode}`)
       .then(res => res.json())
       .then(data => {
-        // Map the payload to a dictionary for easy lookup
-        const details = {};
-        details['supervisor'] = data.supervisor;
-        data.specialists.forEach(spec => {
-          details[spec.id] = spec;
-        });
+        const details = { supervisor: data.supervisor };
+        data.specialists.forEach(spec => { details[spec.id] = spec; });
         setAgentDetails(details);
-        setSelectedAgent(details['supervisor']);
+        setProvider(data.provider || '');
+        setSelectedAgent(data.supervisor);
+        setGraphData(buildGraph(data.supervisor, data.specialists));
         setLoading(false);
       })
       .catch(err => {
@@ -89,9 +130,16 @@ const Agents = () => {
     <div style={{ display: 'flex', gap: '1.5rem', height: '100%', padding: '1rem', overflow: 'hidden' }}>
       {/* Graph Area */}
       <div className="glass-panel" style={{ flex: 2, display: 'flex', flexDirection: 'column', height: '100%' }}>
-        <h2 style={{ fontSize: '1.2rem', fontWeight: 600, marginBottom: '0.5rem' }}>ADK Agent Swarm</h2>
+        <div style={{ display: 'flex', alignItems: 'baseline', gap: '0.75rem', marginBottom: '0.5rem' }}>
+          <h2 style={{ fontSize: '1.2rem', fontWeight: 600 }}>Connect SRE Agent Swarm</h2>
+          {provider && (
+            <span style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', border: '1px solid var(--border-glass)', borderRadius: '4px', padding: '0.1rem 0.4rem' }}>
+              {provider}
+            </span>
+          )}
+        </div>
         <div style={{ flex: 1, border: '1px solid var(--border-glass)', borderRadius: '8px', overflow: 'hidden' }}>
-          <ReactFlow nodes={initialNodes} edges={initialEdges} onNodeClick={onNodeClick} fitView nodesDraggable={false}>
+          <ReactFlow nodes={graphData.nodes} edges={graphData.edges} onNodeClick={onNodeClick} fitView nodesDraggable={false}>
             <Background color="var(--border-highlight)" gap={16} />
             <Controls />
           </ReactFlow>

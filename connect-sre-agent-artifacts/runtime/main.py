@@ -648,7 +648,9 @@ async def get_agents_status(mode: str = Query("demo")):
     Checks if there are active investigations.
     """
     if mode == "demo":
+        provider_label = "AWS Strands (Bedrock)" if MODEL_PROVIDER == "bedrock" else "Google ADK (Gemini)"
         return {
+          "provider": provider_label,
           "supervisor": {
             "id": "supervisor", "name": "Connect Supervisor Agent", "status": "Investigating",
             "health": "100%", "model": _ACTIVE_MODEL_LABEL, "tasks": 12, "purpose": "Demo Mode Orchestration"
@@ -699,7 +701,9 @@ async def get_agents_status(mode: str = Query("demo")):
         ("verify",  "verification_specialist",        "Verification Agent",         "Confirms alarms have cleared and error rates are normal after remediation."),
     ]
 
+    provider_label = "AWS Strands (Bedrock)" if MODEL_PROVIDER == "bedrock" else "Google ADK (Gemini)"
     return {
+      "provider": provider_label,
       "supervisor": {
         "id": "supervisor",
         "name": "Connect Supervisor Agent",
