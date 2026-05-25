@@ -24,6 +24,7 @@ aws cloudformation deploy \
   --template-file $TEMPLATE_FILE \
   --stack-name $STACK_NAME \
   --parameter-overrides EnvironmentName=dev AllowedAdminCIDR=$CURRENT_IP/32 \
-  --capabilities CAPABILITY_NAMED_IAM
+  --capabilities CAPABILITY_NAMED_IAM \
+  --profile connect-sre-dev
 
 echo "Security Group successfully updated!"

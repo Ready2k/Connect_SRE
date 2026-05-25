@@ -3,14 +3,20 @@ import logging
 import random
 import time
 from datetime import datetime, timedelta
-from fastapi import FastAPI, BackgroundTasks, HTTPException, Query
+from fastapi import FastAPI, BackgroundTasks, HTTPException, Query, Request
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 from typing import Any, Dict, Optional
 import boto3
+import uuid
 
-from agent import get_supervisor_agent
+from agent import get_supervisor_agent, MODEL_PROVIDER, BEDROCK_MODEL_ID
+
+# Human-readable label shown in traces and agent status responses
+_ACTIVE_MODEL_LABEL = (
+    BEDROCK_MODEL_ID if MODEL_PROVIDER == "bedrock" else "gemini-3.5-flash"
+)
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -28,6 +34,7 @@ JOURNEYS_TABLE = os.environ.get("JOURNEYS_TABLE_NAME", "dev-connect-sre-journey-
 TOOLS_TABLE = os.environ.get("TOOLS_TABLE_NAME", "dev-connect-sre-tool-registry")
 POLICY_TABLE = os.environ.get("POLICY_TABLE_NAME", "dev-connect-sre-policy-config")
 RUNBOOKS_BUCKET = os.environ.get("RUNBOOKS_BUCKET_NAME", "dev-connect-sre-runbooks-388660028061-us-west-2")
+TRACE_TABLE_NAME = os.environ.get("AGENT_RUNS_TABLE_NAME", "dev-connect-sre-agent-runs")
 
 s3_client = boto3.client("s3", region_name=os.environ.get("AWS_REGION", os.environ.get("AWS_DEFAULT_REGION", "us-west-2")))
 
@@ -47,8 +54,8 @@ class ModelConfigPayload(BaseModel):
 # In-memory config state (demo only — no DynamoDB config table yet)
 _model_config: Dict[str, Any] = {
     "agentMode": "recommend_only",
-    "primaryModel": "gemini-1.5-pro",
-    "fallbackModel": "claude-3-sonnet",
+    "primaryModel": _ACTIVE_MODEL_LABEL,
+    "fallbackModel": "",
 }
 
 # In-memory cache for Connect instance list (avoid hammering the API)
@@ -162,6 +169,139 @@ async def get_incidents():
     except Exception as e:
         logger.error(f"Failed to fetch incidents: {e}")
         return []
+
+@app.post("/api/incidents/{incident_id}/trigger")
+async def trigger_agent_for_incident(incident_id: str):
+    try:
+        table = dynamodb.Table(INCIDENT_TABLE)
+        response = table.get_item(Key={'incidentId': incident_id})
+        incident = response.get('Item')
+        if not incident:
+            raise HTTPException(status_code=404, detail="Incident not found")
+            
+        # Update incident status to investigating
+        table.update_item(
+            Key={'incidentId': incident_id},
+            UpdateExpression="SET #s = :s",
+            ExpressionAttributeNames={'#s': 'status'},
+            ExpressionAttributeValues={':s': 'Investigating'}
+        )
+        
+        # Write mock agent traces for demonstration
+        trace_table = dynamodb.Table(TRACE_TABLE_NAME)
+        now = datetime.utcnow()
+        mock_traces = [
+            {
+                "runId": f"run-{uuid.uuid4().hex[:8]}",
+                "incidentId": incident_id,
+                "agentName": "SupervisorAgent",
+                "startedAt": now.isoformat() + "Z",
+                "latencyMs": 850,
+                "modelId": _ACTIVE_MODEL_LABEL,
+                "toolCalls": ["query_topology"],
+                "status": "success",
+                "thoughtProcess": f"I see an incident {incident_id}. I need to determine the blast radius by querying the topology graph.",
+                "inputTokenCount": 1050,
+                "outputTokenCount": 150,
+                "costEstimate": "$0.0035"
+            },
+            {
+                "runId": f"run-{uuid.uuid4().hex[:8]}",
+                "incidentId": incident_id,
+                "agentName": "FlowHealthAgent",
+                "startedAt": (now + timedelta(seconds=1)).isoformat() + "Z",
+                "latencyMs": 4200,
+                "modelId": _ACTIVE_MODEL_LABEL,
+                "toolCalls": ["query_cloudwatch_flow_logs", "query_connect_metrics"],
+                "status": "success",
+                "thoughtProcess": "The topology shows the issue is in the 'Main_Routing' flow. I am querying CloudWatch logs and Connect metrics to verify the error rate. Found 5 fatal errors relating to Lex bot timeout.",
+                "inputTokenCount": 4500,
+                "outputTokenCount": 800,
+                "costEstimate": "$0.0150"
+            },
+            {
+                "runId": f"run-{uuid.uuid4().hex[:8]}",
+                "incidentId": incident_id,
+                "agentName": "SupervisorAgent",
+                "startedAt": (now + timedelta(seconds=6)).isoformat() + "Z",
+                "latencyMs": 1200,
+                "modelId": _ACTIVE_MODEL_LABEL,
+                "toolCalls": ["propose_remediation"],
+                "status": "success",
+                "thoughtProcess": "The root cause is a Lex integration timeout. I will propose a remediation to route calls to the emergency fallback queue while Lex is recovering.",
+                "inputTokenCount": 2100,
+                "outputTokenCount": 200,
+                "costEstimate": "$0.0080"
+            }
+        ]
+        
+        for trace in mock_traces:
+            trace_table.put_item(Item=trace)
+
+        return {"status": "success", "message": "Agent triggered."}
+    except Exception as e:
+        logger.error(f"Failed to trigger agent: {e}")
+        return {"status": "error", "message": str(e)}
+
+@app.get("/api/incidents/{incident_id}/traces")
+async def get_incident_traces(incident_id: str):
+    try:
+        table = dynamodb.Table(TRACE_TABLE_NAME)
+        # Using scan for MVP since we don't have a GSI on incidentId
+        response = table.scan(
+            FilterExpression=boto3.dynamodb.conditions.Attr('incidentId').eq(incident_id)
+        )
+        items = response.get('Items', [])
+        items.sort(key=lambda x: x.get('startedAt', ''))
+        return items
+    except Exception as e:
+        logger.error(f"Failed to fetch traces: {e}")
+        return []
+
+@app.post("/api/traces")
+async def create_trace(request: Request):
+    try:
+        data = await request.json()
+        if 'runId' not in data:
+            data['runId'] = f"run-{uuid.uuid4().hex[:8]}"
+        if 'startedAt' not in data:
+            data['startedAt'] = datetime.utcnow().isoformat() + "Z"
+            
+        table = dynamodb.Table(TRACE_TABLE_NAME)
+        table.put_item(Item=data)
+        return {"status": "success", "runId": data['runId']}
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
+@app.get("/api/agents/config")
+async def get_agent_config():
+    try:
+        table = dynamodb.Table(POLICY_TABLE)
+        response = table.get_item(Key={'policyName': 'AgentToolConfig'})
+        if 'Item' in response:
+            return response['Item'].get('config', {})
+        else:
+            return {
+                "logGroupName": "/aws/connect/default",
+                "defaultTimeWindowMinutes": 60
+            }
+    except Exception as e:
+        logger.error(f"Failed to fetch agent config: {e}")
+        return {"error": str(e)}
+
+@app.patch("/api/agents/config")
+async def update_agent_config(payload: dict):
+    try:
+        table = dynamodb.Table(POLICY_TABLE)
+        table.put_item(Item={
+            'policyName': 'AgentToolConfig',
+            'enabled': True,
+            'config': payload
+        })
+        return {"status": "success"}
+    except Exception as e:
+        logger.error(f"Failed to update agent config: {e}")
+        return {"status": "error", "message": str(e)}
 
 @app.get("/api/topology")
 async def get_topology(
@@ -334,7 +474,7 @@ async def get_agents_status():
         "name": "Connect Supervisor Agent",
         "status": "Orchestrating",
         "health": "100%",
-        "model": "Gemini 2.5 Flash",
+        "model": _ACTIVE_MODEL_LABEL,
         "tasks": 12,
         "purpose": "Owns the incident lifecycle, delegates tasks to specialists."
       },
@@ -344,7 +484,7 @@ async def get_agents_status():
           "name": "Flow Health Agent",
           "status": "Idle",
           "health": "100%",
-          "model": "Gemini 2.5 Flash",
+          "model": _ACTIVE_MODEL_LABEL,
           "tasks": 4,
           "purpose": "Diagnoses contact flow errors."
         },
@@ -353,7 +493,7 @@ async def get_agents_status():
           "name": "Queue & Routing Agent",
           "status": "Analyzing",
           "health": "98%",
-          "model": "Gemini 2.5 Flash",
+          "model": _ACTIVE_MODEL_LABEL,
           "tasks": 1,
           "purpose": "Diagnoses queue wait time."
         }
