@@ -1,0 +1,43 @@
+# ── Git ───────────────────────────────────────────────────────────────────────
+.git/
+.gitignore
+
+# ── Infrastructure (Lambda source, scripts — not needed in the container) ─────
+infra/
+
+# ── Node artefacts (rebuilt inside the ui-builder stage) ──────────────────────
+ui/node_modules/
+ui/dist/
+ui/.vite/
+
+# ── Python bytecode ───────────────────────────────────────────────────────────
+**/__pycache__/
+**/*.py[cod]
+**/*.pyo
+
+# ── Environment / secrets ─────────────────────────────────────────────────────
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# ── Dev / test artefacts ──────────────────────────────────────────────────────
+**/.pytest_cache/
+**/.coverage
+**/htmlcov/
+**/*.log
+
+# ── macOS ─────────────────────────────────────────────────────────────────────
+.DS_Store
+._*
+
+# ── IDEs ──────────────────────────────────────────────────────────────────────
+.vscode/
+.idea/
+.cursor/
+
+# ── Docs / scripts not needed at runtime ──────────────────────────────────────
+*.md
+stop.sh
+start.sh
