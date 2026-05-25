@@ -27,16 +27,29 @@ from prompts import (
     RISK_POLICY_PROMPT,
     VERIFICATION_PROMPT,
 )
+from strands import tool as _strands_tool
 from tools import (
-    calculate_blast_radius,
-    fetch_runbook,
-    propose_remediation,
-    query_cloudwatch_flow_logs,
-    query_connect_metrics,
-    query_recent_mutations,
-    query_topology,
-    query_connect_ctrs
+    calculate_blast_radius as _calculate_blast_radius,
+    fetch_runbook as _fetch_runbook,
+    propose_remediation as _propose_remediation,
+    query_cloudwatch_flow_logs as _query_cloudwatch_flow_logs,
+    query_connect_metrics as _query_connect_metrics,
+    query_recent_mutations as _query_recent_mutations,
+    query_topology as _query_topology,
+    query_connect_ctrs as _query_connect_ctrs,
 )
+
+# Wrap with @tool so Strands can build JSON schemas for each function.
+# tools.py stays provider-agnostic; the decorator is applied here at the
+# Strands boundary only.
+query_topology = _strands_tool(_query_topology)
+calculate_blast_radius = _strands_tool(_calculate_blast_radius)
+query_recent_mutations = _strands_tool(_query_recent_mutations)
+fetch_runbook = _strands_tool(_fetch_runbook)
+propose_remediation = _strands_tool(_propose_remediation)
+query_connect_metrics = _strands_tool(_query_connect_metrics)
+query_connect_ctrs = _strands_tool(_query_connect_ctrs)
+query_cloudwatch_flow_logs = _strands_tool(_query_cloudwatch_flow_logs)
 
 logger = logging.getLogger(__name__)
 
