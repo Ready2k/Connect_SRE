@@ -2,6 +2,7 @@ import os
 import json
 import datetime
 import boto3
+from botocore.exceptions import ClientError
 
 DYNAMODB = boto3.resource("dynamodb")
 SSM = boto3.client("ssm")
@@ -127,23 +128,26 @@ def evaluate_policy_gates(policy, operator, approval_id):
 def execute_remediation(action_type, parameters):
     print(json.dumps({"event": "remediation_executing", "actionType": action_type, "parameters": parameters}))
 
-    # Determine mock run vs actual SSM
-    # In Dev MVP, we simulate execution to avoid breaking active stacks
-    simulated_execution_id = f"ssm-exec-{uuid_hash()}"
-
-    # Try actual SSM invoke if configured
+    document_name = f"SRE-Connect-{action_type}"
     try:
-        # This is where a real Systems Manager Automation is triggered
-        # ssm_response = SSM.start_automation_execution(
-        #     DocumentName=f"SRE-Connect-{action_type}",
-        #     Parameters={k: [str(v)] for k, v in parameters.items()}
-        # )
-        # return ssm_response.get('AutomationExecutionId')
-        pass
-    except Exception as e:
-        print(f"Warning: SSM execution bypassed, falling back to simulator: {str(e)}")
-
-    return simulated_execution_id
+        ssm_response = SSM.start_automation_execution(
+            DocumentName=document_name,
+            Parameters={k: [str(v)] for k, v in parameters.items()},
+        )
+        execution_id = ssm_response["AutomationExecutionId"]
+        print(json.dumps({"event": "ssm_execution_started", "actionType": action_type, "documentName": document_name, "executionId": execution_id}))
+        return execution_id
+    except ClientError as e:
+        error_code = e.response["Error"]["Code"]
+        if error_code == "InvalidDocument":
+            # SSM Automation document not yet provisioned — simulate for dev/MVP.
+            # Once SRE-Connect-{action_type} documents are deployed this branch
+            # will never be reached in production.
+            simulated_id = f"sim-{uuid_hash()}"
+            print(json.dumps({"event": "ssm_document_missing_simulated", "actionType": action_type, "documentName": document_name, "simulatedId": simulated_id}))
+            return simulated_id
+        print(json.dumps({"event": "ssm_execution_error", "actionType": action_type, "documentName": document_name, "errorCode": error_code, "error": str(e)}))
+        raise
 
 
 def deny_execution(approval_id, incident_id, action_type, reason, now, operator="system"):

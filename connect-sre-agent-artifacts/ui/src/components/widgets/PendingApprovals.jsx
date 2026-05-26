@@ -96,6 +96,7 @@ const PendingApprovals = () => {
               <tr style={{ color: 'var(--text-secondary)', borderBottom: '1px solid var(--border-glass)' }}>
                 <th style={{ padding: '0.75rem 0.5rem', fontWeight: 600 }}>Action</th>
                 <th style={{ padding: '0.75rem 0.5rem', fontWeight: 600 }}>Incident ID</th>
+                <th style={{ padding: '0.75rem 0.5rem', fontWeight: 600 }}>Blast Radius</th>
                 <th style={{ padding: '0.75rem 0.5rem', fontWeight: 600 }}>Justification</th>
                 <th style={{ padding: '0.75rem 0.5rem', fontWeight: 600 }}>Created</th>
                 <th style={{ padding: '0.75rem 0.5rem', fontWeight: 600, textAlign: 'right' }}>Actions</th>
@@ -106,7 +107,19 @@ const PendingApprovals = () => {
                 <tr key={idx} style={{ borderBottom: '1px solid rgba(255,255,255,0.05)' }}>
                   <td style={{ padding: '0.75rem 0.5rem' }}>{app.actionType}</td>
                   <td style={{ padding: '0.75rem 0.5rem', color: 'var(--text-secondary)' }}>{app.incidentId}</td>
-                  <td style={{ padding: '0.75rem 0.5rem', color: 'var(--text-secondary)', maxWidth: '260px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={app.justification}>{app.justification || '—'}</td>
+                  <td style={{ padding: '0.75rem 0.5rem' }}>
+                    {app.blastRadius ? (() => {
+                      const n = app.blastRadius.impactedCount ?? 0;
+                      const color = n > 15 ? 'var(--status-critical)' : n > 5 ? 'var(--status-warning)' : 'var(--status-ok)';
+                      return (
+                        <span title={`${n} impacted node${n !== 1 ? 's' : ''}`}
+                          style={{ color, fontWeight: 600, fontSize: '0.8rem' }}>
+                          {n} node{n !== 1 ? 's' : ''}
+                        </span>
+                      );
+                    })() : <span style={{ color: 'var(--text-secondary)' }}>—</span>}
+                  </td>
+                  <td style={{ padding: '0.75rem 0.5rem', color: 'var(--text-secondary)', maxWidth: '240px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={app.justification}>{app.justification || '—'}</td>
                   <td style={{ padding: '0.75rem 0.5rem' }}>{app.createdAt}</td>
                   <td style={{ padding: '0.75rem 0.5rem', textAlign: 'right', display: 'flex', gap: '0.5rem', justifyContent: 'flex-end' }}>
                     <button onClick={() => handleAction(app.approvalId, 'APPROVED')} style={{

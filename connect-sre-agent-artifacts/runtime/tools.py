@@ -180,14 +180,25 @@ def propose_remediation(action_type: str, params: str, incident_id: str, justifi
             if current_hour >= 22 or current_hour < 6:
                 blocked_reason = "Blocked by Policy: Out-of-hours Deployments (22:00-06:00 UTC)"
 
-        blast_policy = next((p for p in policies if p["policyName"] == "Max Blast Radius: 20%" and p.get("enabled", False)), None)
-        if blast_policy and not blocked_reason:
-            target_node = params_dict.get("targetNodeId")
-            if target_node:
+        # Always compute blast radius when a target node is named so the data
+        # is available for the approval record regardless of policy state.
+        blast_radius_data = None
+        target_node = params_dict.get("targetNodeId")
+        if target_node:
+            try:
                 impact = json.loads(calculate_blast_radius(target_node, max_depth=3, direction="upstream"))
-                impacted = impact.get("impacted_count", 0)
-                if impacted / 100.0 > 0.20:
-                    blocked_reason = f"Blocked by Policy: Max Blast Radius exceeded. Impacted: {impacted} nodes (>20%)"
+                blast_radius_data = {
+                    "impactedCount": impact.get("impacted_count", 0),
+                    "impactedNodes": impact.get("impacted_nodes", [])[:50],
+                }
+            except Exception:
+                pass
+
+        blast_policy = next((p for p in policies if p["policyName"] == "Max Blast Radius: 20%" and p.get("enabled", False)), None)
+        if blast_policy and not blocked_reason and blast_radius_data:
+            impacted = blast_radius_data["impactedCount"]
+            if impacted / 100.0 > 0.20:
+                blocked_reason = f"Blocked by Policy: Max Blast Radius exceeded. Impacted: {impacted} nodes (>20%)"
 
         lambda_requires_approval = False
         lambda_policy = next((p for p in policies if p["policyName"] == "Require Approval for Lambda Updates" and p.get("enabled", False)), None)
@@ -206,19 +217,23 @@ def propose_remediation(action_type: str, params: str, incident_id: str, justifi
         approval_id = f"APP-{uuid.uuid4().hex[:8].upper()}"
         now = datetime.datetime.utcnow().isoformat() + "Z"
 
-        DYNAMODB.Table(APPROVAL_TABLE_NAME).put_item(Item={
+        item = {
             "approvalId": approval_id,
             "status": status,
             "actionType": action_type,
             "parameters": params_dict,
             "incidentId": incident_id,
             "justification": justification,
-            "createdAt": now
-        })
+            "createdAt": now,
+        }
+        if blast_radius_data:
+            item["blastRadius"] = blast_radius_data
+
+        DYNAMODB.Table(APPROVAL_TABLE_NAME).put_item(Item=item)
 
         if status == "AUTO_APPROVED":
-            return json.dumps({"status": "success", "message": f"Remediation ticket {approval_id} auto-approved by SEV4 policy."})
-        return json.dumps({"status": "success", "message": f"Remediation ticket {approval_id} created and awaiting human approval."})
+            return json.dumps({"status": "success", "approvalId": approval_id, "message": f"Remediation ticket {approval_id} auto-approved by SEV4 policy."})
+        return json.dumps({"status": "success", "approvalId": approval_id, "message": f"Remediation ticket {approval_id} created and awaiting human approval."})
     except Exception as e:
         return json.dumps({"status": "error", "message": str(e)})
 
