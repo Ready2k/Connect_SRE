@@ -174,7 +174,7 @@ def propose_remediation(action_type: str, params: str, incident_id: str, justifi
         status = "PENDING"
         blocked_reason = None
 
-        out_of_hours_policy = next((p for p in policies if p["policyName"] == "Block Out-of-hours Deployments" and p.get("enabled", False)), None)
+        out_of_hours_policy = next((p for p in policies if p.get("policyName", "") == "Block Out-of-hours Deployments" and p.get("enabled", False)), None)
         if out_of_hours_policy:
             current_hour = datetime.datetime.utcnow().hour
             if current_hour >= 22 or current_hour < 6:
@@ -194,19 +194,19 @@ def propose_remediation(action_type: str, params: str, incident_id: str, justifi
             except Exception:
                 pass
 
-        blast_policy = next((p for p in policies if p["policyName"] == "Max Blast Radius: 20%" and p.get("enabled", False)), None)
+        blast_policy = next((p for p in policies if p.get("policyName", "") == "Max Blast Radius: 20%" and p.get("enabled", False)), None)
         if blast_policy and not blocked_reason and blast_radius_data:
             impacted = blast_radius_data["impactedCount"]
             if impacted / 100.0 > 0.20:
                 blocked_reason = f"Blocked by Policy: Max Blast Radius exceeded. Impacted: {impacted} nodes (>20%)"
 
         lambda_requires_approval = False
-        lambda_policy = next((p for p in policies if p["policyName"] == "Require Approval for Lambda Updates" and p.get("enabled", False)), None)
+        lambda_policy = next((p for p in policies if p.get("policyName", "") == "Require Approval for Lambda Updates" and p.get("enabled", False)), None)
         if lambda_policy and not blocked_reason:
             if "lambda" in action_type.lower() or "lambda" in str(params_dict).lower():
                 lambda_requires_approval = True
 
-        sev4_policy = next((p for p in policies if p["policyName"] == "Auto-approve SEV4 Changes" and p.get("enabled", False)), None)
+        sev4_policy = next((p for p in policies if p.get("policyName", "") == "Auto-approve SEV4 Changes" and p.get("enabled", False)), None)
         if sev4_policy and not blocked_reason and not lambda_requires_approval:
             if "sev4" in justification.lower() or params_dict.get("severity") == "SEV4":
                 status = "AUTO_APPROVED"

@@ -35,12 +35,14 @@ def test_tool_signatures():
         query_topology, calculate_blast_radius, query_recent_mutations,
         fetch_runbook, propose_remediation, query_connect_metrics,
         query_connect_ctrs, query_cloudwatch_flow_logs,
+        recall_prior_incidents, record_investigation_memory,
     )
 
     tools = [
         query_topology, calculate_blast_radius, query_recent_mutations,
         fetch_runbook, propose_remediation, query_connect_metrics,
         query_connect_ctrs, query_cloudwatch_flow_logs,
+        recall_prior_incidents, record_investigation_memory,
     ]
 
     failures = []
@@ -111,7 +113,7 @@ def test_supervisor_build():
     try:
         region = os.environ.get("AWS_REGION", "us-west-2")
         model = BedrockModel(model_id="us.anthropic.claude-sonnet-4-6", region_name=region)
-        supervisor = build_strands_supervisor(model)
+        supervisor, _ = build_strands_supervisor(model)
         return supervisor, None
     except Exception as e:
         return None, str(e)
@@ -152,7 +154,7 @@ def run():
                 print(f)
             results["signatures"] = False
         else:
-            print(f"  {PASS}  All 8 tools have str return types and no bare dict params")
+            print(f"  {PASS}  All 10 tools have str return types and no bare dict params")
             results["signatures"] = True
     except Exception as e:
         print(f"  {FAIL}  Import error: {e}")
