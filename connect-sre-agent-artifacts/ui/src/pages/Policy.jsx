@@ -76,7 +76,7 @@ const Policy = () => {
               
               <div>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.25rem' }}>
-                  <h3 style={{ fontSize: '1.1rem', margin: 0, fontWeight: 600 }}>{policy.name}</h3>
+                  <h3 style={{ fontSize: '1.1rem', margin: 0, fontWeight: 600 }}>{policy.policyName || policy.name}</h3>
                   <Info size={14} color="var(--text-secondary)" />
                 </div>
                 <p style={{ margin: 0, fontSize: '0.85rem', color: 'var(--text-secondary)' }}>

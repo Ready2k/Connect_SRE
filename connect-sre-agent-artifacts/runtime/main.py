@@ -65,7 +65,9 @@ AGENT_STEPS_TABLE_NAME = os.environ.get("AGENT_STEPS_TABLE_NAME", "dev-connect-s
 _STEPS_TTL_DAYS = 90
 
 s3_client = boto3.client("s3", region_name=os.environ.get("AWS_REGION", os.environ.get("AWS_DEFAULT_REGION", "us-west-2")))
+sqs_client = boto3.client("sqs", region_name=os.environ.get("AWS_REGION", os.environ.get("AWS_DEFAULT_REGION", "us-west-2")))
 lambda_client = boto3.client("lambda", region_name=os.environ.get("AWS_REGION", os.environ.get("AWS_DEFAULT_REGION", "us-west-2")))
+TOPOLOGY_REFRESH_QUEUE_URL = os.environ.get("TOPOLOGY_REFRESH_QUEUE_URL", "")
 ACTION_DISPATCHER_LAMBDA_NAME = os.environ.get("ACTION_DISPATCHER_LAMBDA_NAME", "dev-connect-sre-action-dispatcher")
 
 def is_active_incident(item: dict) -> bool:
@@ -803,15 +805,24 @@ async def get_tools(mode: str = Query("demo")):
 async def get_policy(mode: str = Query("demo")):
     if mode == "demo":
         return [
-            {"policyId": "POL-001", "name": "Require Human Approval for Remediations", "description": "Mandates that any state-changing remediation action must be explicitly approved by a human in the UI.", "enabled": True},
-            {"policyId": "POL-002", "name": "Allow Connect Routing Profile Modification", "description": "Grants the agent permission to dynamically change routing profiles during a severe queue backup.", "enabled": False},
-            {"policyId": "POL-003", "name": "Allow Connect Prompt Creation", "description": "Grants the agent permission to create temporary audio prompts for emergency IVR broadcasts.", "enabled": True}
+            {"policyId": "POL-001", "policyName": "Require Human Approval for Remediations", "description": "Mandates that any state-changing remediation action must be explicitly approved by a human in the UI.", "enabled": True},
+            {"policyId": "POL-002", "policyName": "Allow Connect Routing Profile Modification", "description": "Grants the agent permission to dynamically change routing profiles during a severe queue backup.", "enabled": False},
+            {"policyId": "POL-003", "policyName": "Allow Connect Prompt Creation", "description": "Grants the agent permission to create temporary audio prompts for emergency IVR broadcasts.", "enabled": True},
+            {"policyId": "POL-005", "policyName": "Max Blast Radius: 20%", "description": "Blocks any automatic or proposed agent remediation action if its calculated blast radius exceeds 20% of the instance call volume.", "enabled": True},
+            {"policyId": "POL-007", "policyName": "Block Out-of-hours Deployments", "description": "Blocks any autonomous write action outside standard business hours (22:00-06:00 UTC).", "enabled": True},
+            {"policyId": "POL-008", "policyName": "Require Approval for Lambda Updates", "description": "Forces human approval for any remediation that targets a Lambda function.", "enabled": True},
+            {"policyId": "POL-009", "policyName": "Auto-approve SEV4 Changes", "description": "Allows the agent to auto-approve low-impact SEV4 remediations without waiting for human review.", "enabled": False},
         ]
     try:
         table = dynamodb.Table(POLICY_TABLE)
         response = table.scan()
         items = response.get('Items', [])
-        # Filter out AgentToolConfig which is internal
+        # Normalise field: live items may use "policyName" (new) or legacy "name" — expose both
+        # so the UI can render either without a schema migration.
+        for item in items:
+            if "policyName" not in item and "name" in item:
+                item["policyName"] = item["name"]
+        # Filter out internal AgentToolConfig entry
         return [item for item in items if item.get('policyId') != 'AgentToolConfig']
     except Exception as e:
         logger.error(f"Failed to fetch policy: {e}")
@@ -825,9 +836,10 @@ async def update_policy(payload: list, mode: str = Query("demo")):
         table = dynamodb.Table(POLICY_TABLE)
         with table.batch_writer() as batch:
             for policy in payload:
+                policy_name = policy.get('policyName') or policy.get('name')
                 batch.put_item(Item={
                     'policyId': policy['policyId'],
-                    'name': policy.get('name'),
+                    'policyName': policy_name,
                     'description': policy.get('description'),
                     'enabled': policy.get('enabled', False)
                 })
@@ -1043,6 +1055,57 @@ async def get_agents_status(mode: str = Query("demo")):
         for sid, agent_key, name, purpose in _SPECIALISTS
       ]
     }
+
+@app.post("/api/topology/scan")
+async def trigger_topology_scan(mode: str = Query("demo")):
+    """Enqueue a full topology discovery by sending a message to the TopologyRefreshQueue."""
+    if mode == "demo":
+        return {"status": "success", "message": "Topology scan triggered (demo — no real scan performed)."}
+    if not TOPOLOGY_REFRESH_QUEUE_URL:
+        raise HTTPException(status_code=503, detail="TOPOLOGY_REFRESH_QUEUE_URL is not configured.")
+    try:
+        sqs_client.send_message(
+            QueueUrl=TOPOLOGY_REFRESH_QUEUE_URL,
+            MessageBody=json.dumps({"trigger": "manual-ui", "source": "sre-ui", "ts": datetime.utcnow().isoformat() + "Z"}),
+        )
+        logger.info("Topology scan queued via UI")
+        return {"status": "success", "message": "Topology scan queued. Results will appear in the topology view within ~30 seconds."}
+    except Exception as e:
+        logger.error(f"Failed to queue topology scan: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/agents/tasks")
+async def get_agent_tasks(mode: str = Query("demo"), limit: int = Query(20)):
+    """Returns the most recent agent investigation runs for the task drill-down panel."""
+    if mode == "demo":
+        return [
+            {"runId": "run-DEMO01", "incidentId": "INC-DEMO-001", "status": "complete", "stepCount": 14, "approxInputTokens": 4200, "approxOutputTokens": 1100, "createdAt": "2026-05-26T09:12:00Z", "summary": "Flow fatal error on BillingFlow traced to broken Lex bot alias. Rollback proposed."},
+            {"runId": "run-DEMO02", "incidentId": "INC-DEMO-002", "status": "complete", "stepCount": 8,  "approxInputTokens": 2800, "approxOutputTokens": 680,  "createdAt": "2026-05-26T08:44:00Z", "summary": "Queue overflow on SupportQueue — blast radius 12 flows. Emergency routing ticket raised."},
+            {"runId": "run-DEMO03", "incidentId": "INC-DEMO-003", "status": "complete", "stepCount": 5,  "approxInputTokens": 1600, "approxOutputTokens": 390,  "createdAt": "2026-05-25T22:01:00Z", "summary": "Lambda throttle on AuthLambda — no customer impact. Runbook fetched, no action required."},
+        ]
+    try:
+        table = dynamodb.Table(TRACE_TABLE_NAME)
+        resp = table.scan()
+        items = resp.get("Items", [])
+        items.sort(key=lambda x: x.get("createdAt", ""), reverse=True)
+        return [
+            {
+                "runId": item.get("runId", ""),
+                "incidentId": item.get("incidentId", ""),
+                "status": item.get("status", ""),
+                "stepCount": item.get("stepCount", 0),
+                "approxInputTokens": item.get("approxInputTokens", 0),
+                "approxOutputTokens": item.get("approxOutputTokens", 0),
+                "createdAt": item.get("createdAt", ""),
+                "summary": (item.get("response", "") or "")[:200],
+            }
+            for item in items[:limit]
+        ]
+    except Exception as e:
+        logger.error(f"Failed to fetch agent tasks: {e}")
+        return []
+
 
 @app.get("/api/monitoring/metrics")
 async def get_monitoring_metrics(

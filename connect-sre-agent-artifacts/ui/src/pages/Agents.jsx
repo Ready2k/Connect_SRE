@@ -1,8 +1,9 @@
 import { useState, useEffect, useRef } from 'react';
 import ReactFlow, { Background, Controls } from 'reactflow';
 import 'reactflow/dist/style.css';
-import { Bot, Activity, BrainCircuit, Settings, Save } from 'lucide-react';
+import { Bot, Activity, BrainCircuit, Settings, Save, ChevronDown, ChevronUp, ExternalLink } from 'lucide-react';
 import { useAppContext } from '../context/AppContext';
+import { useNavigate } from 'react-router-dom';
 
 const SPECIALIST_COLS = 5;
 const NODE_W = 160;
@@ -61,11 +62,15 @@ function buildGraph(supervisor, specialists) {
 
 const Agents = () => {
   const { mode } = useAppContext();
+  const navigate = useNavigate();
   const [agentDetails, setAgentDetails] = useState(null);
   const [provider, setProvider] = useState('');
   const [selectedAgent, setSelectedAgent] = useState(null);
   const [loading, setLoading] = useState(true);
   const [graphData, setGraphData] = useState({ nodes: [], edges: [] });
+  const [tasksExpanded, setTasksExpanded] = useState(false);
+  const [tasks, setTasks] = useState([]);
+  const [tasksLoading, setTasksLoading] = useState(false);
   const [config, setConfig] = useState({
     logGroupName: '',
     defaultTimeWindowMinutes: 60,
@@ -204,8 +209,63 @@ const Agents = () => {
               </div>
             </div>
             <div>
-              <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>Tasks Completed</div>
-              <div style={{ fontSize: '1.2rem', fontWeight: 700 }}>{selectedAgent.tasks}</div>
+              <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: '0.3rem' }}>Tasks Completed</div>
+              <button
+                onClick={() => {
+                  const next = !tasksExpanded;
+                  setTasksExpanded(next);
+                  if (next && tasks.length === 0) {
+                    setTasksLoading(true);
+                    fetch(`/api/agents/tasks?mode=${mode}&limit=20`)
+                      .then(r => r.json())
+                      .then(d => { setTasks(d); setTasksLoading(false); })
+                      .catch(() => setTasksLoading(false));
+                  }
+                }}
+                style={{
+                  background: 'none', border: 'none', padding: 0, cursor: 'pointer',
+                  display: 'flex', alignItems: 'center', gap: '0.4rem', color: 'var(--accent-cyan)',
+                }}
+              >
+                <span style={{ fontSize: '1.2rem', fontWeight: 700, color: 'var(--text-primary)' }}>{selectedAgent.tasks}</span>
+                {tasksExpanded ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
+                <span style={{ fontSize: '0.8rem' }}>view tasks</span>
+              </button>
+
+              {tasksExpanded && (
+                <div style={{ marginTop: '0.75rem', borderTop: '1px solid var(--border-glass)', paddingTop: '0.75rem' }}>
+                  {tasksLoading ? (
+                    <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>Loading…</div>
+                  ) : tasks.length === 0 ? (
+                    <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>No completed tasks found.</div>
+                  ) : (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', maxHeight: '260px', overflowY: 'auto' }}>
+                      {tasks.map((t, i) => (
+                        <div key={i} style={{
+                          background: 'rgba(255,255,255,0.04)', borderRadius: '6px',
+                          padding: '0.5rem 0.7rem', fontSize: '0.8rem', border: '1px solid var(--border-glass)'
+                        }}>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.2rem' }}>
+                            <button
+                              onClick={() => navigate(`/incidents?id=${t.incidentId}`)}
+                              style={{ background: 'none', border: 'none', padding: 0, cursor: 'pointer', color: 'var(--accent-cyan)', fontWeight: 600, display: 'flex', alignItems: 'center', gap: '0.25rem', fontSize: '0.8rem' }}
+                            >
+                              {t.incidentId} <ExternalLink size={11} />
+                            </button>
+                            <span style={{ color: 'var(--text-secondary)', fontSize: '0.75rem' }}>
+                              {t.stepCount} steps · ~{t.approxInputTokens}in/{t.approxOutputTokens}out tok
+                            </span>
+                          </div>
+                          <div style={{ color: 'var(--text-secondary)', fontSize: '0.78rem', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }} title={t.summary}>
+                            {t.summary || '—'}
+                          </div>
+                          <div style={{ color: 'var(--text-secondary)', fontSize: '0.72rem', marginTop: '0.15rem' }}>{t.createdAt}</div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
           </div>
         )}
