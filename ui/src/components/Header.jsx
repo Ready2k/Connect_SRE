@@ -272,20 +272,31 @@ const Header = () => {
           }}></div>
         </div>
 
-        {/* User Profile */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', background: 'rgba(255,255,255,0.05)', padding: '0.5rem 1rem', borderRadius: '20px' }}>
-          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end' }}>
-            <span style={{ fontSize: '0.8rem', fontWeight: 600 }}>Agent: Sarah Jenkins</span>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-              <div style={{ width: 6, height: 6, borderRadius: '50%', background: 'var(--status-ok)' }}></div>
-              <span style={{ fontSize: '0.7rem', color: 'var(--text-secondary)' }}>Active <span style={{ marginLeft: 4 }}>Region: us-west-2</span></span>
+        {/* SRE Service Agent Status */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', background: 'rgba(255,255,255,0.05)', padding: '0.5rem 1rem', borderRadius: '20px', border: '1px solid var(--border-glass)' }}>
+          <div style={{
+            width: 32,
+            height: 32,
+            borderRadius: '50%',
+            background: 'linear-gradient(135deg, rgba(34,197,94,0.2), rgba(6,182,212,0.2))',
+            border: '1px solid rgba(34,197,94,0.4)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            fontSize: '0.7rem',
+            fontWeight: 700,
+            color: 'var(--accent-cyan)',
+            letterSpacing: '0.02em'
+          }}>
+            AI
+          </div>
+          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start' }}>
+            <span style={{ fontSize: '0.8rem', fontWeight: 600, color: 'var(--text-primary)' }}>SRE Agent</span>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+              <div style={{ width: 6, height: 6, borderRadius: '50%', background: 'var(--status-ok)', boxShadow: '0 0 4px var(--status-ok)' }}></div>
+              <span style={{ fontSize: '0.7rem', color: 'var(--text-secondary)' }}>Active &middot; us-west-2</span>
             </div>
           </div>
-          <img
-            src="https://api.dicebear.com/7.x/avataaars/svg?seed=Sarah"
-            alt="Agent Profile"
-            style={{ width: 32, height: 32, borderRadius: '50%', background: 'var(--bg-primary)' }}
-          />
         </div>
       </div>
 
