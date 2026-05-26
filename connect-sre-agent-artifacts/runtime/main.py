@@ -775,8 +775,13 @@ async def action_approval(approval_id: str, request: Request, payload: dict, mod
 async def get_journeys(mode: str = Query("demo")):
     if mode == "demo":
         return [
-            {"journeyId": "J-001", "name": "Main Sales Flow", "criticality": "High", "status": "Healthy"},
-            {"journeyId": "J-002", "name": "Support Escalation", "criticality": "Medium", "status": "Degraded"}
+            {"journeyId": "journey-authentication", "name": "Customer Authentication & Biometrics", "criticality": "TIER1", "status": "Healthy", "entryPoint": "+1-800-555-0199 (Auth Line)", "flows": ["Auth Inbound Flow", "Identity Verification Bot (Lex)"], "activeContacts": 14, "sla": "99.9%", "owner": "Security-Ops"},
+            {"journeyId": "journey-billing", "name": "Billing & Payments Self-Service", "criticality": "TIER1", "status": "Healthy", "entryPoint": "+1-800-555-0122 (Billing Line)", "flows": ["Billing Main Flow", "CheckCustomerBalance (Lambda)"], "activeContacts": 28, "sla": "99.5%", "owner": "Billing-Operations"},
+            {"journeyId": "journey-agent-assist", "name": "Agent Copilot & Knowledge Assist (Q)", "criticality": "TIER2", "status": "Healthy", "entryPoint": "Agent CCP Integration", "flows": ["Q-Assistant-Trigger-Flow", "Wisdom-Ingest-Stream"], "activeContacts": 57, "sla": "99.2%", "owner": "Agent-Experience"},
+            {"journeyId": "journey-telephony", "name": "SIP Trunk Ingestion & Core Routing", "criticality": "TIER1", "status": "Healthy", "entryPoint": "Amazon Connect Direct-Dial SIP", "flows": ["Telephony Ingestion Router"], "activeContacts": 108, "sla": "99.99%", "owner": "Core-Telephony-Platform"},
+            {"journeyId": "journey-agent-sync", "name": "CCP Streams & State Sync (WebRTC)", "criticality": "TIER1", "status": "Degraded", "entryPoint": "WebRTC Client Socket Pool", "flows": ["Agent WebRTC Signaling Flow", "Agent State Sync Event Rule"], "activeContacts": 42, "sla": "99.8%", "owner": "Workforce-Management"},
+            {"journeyId": "journey-outbound", "name": "High-Volume Fraud & Verify Alerts", "criticality": "TIER2", "status": "Healthy", "entryPoint": "Lambda Outbound Trigger Api", "flows": ["Fraud Notification Outbound Flow"], "activeContacts": 8, "sla": "98.9%", "owner": "Risk-Management"},
+            {"journeyId": "journey-callback", "name": "VIP Priority Escalation & Callback", "criticality": "TIER1", "status": "Healthy", "entryPoint": "Queue Callback Handler", "flows": ["Priority Callback Trigger Flow", "Warm Transfer Flow"], "activeContacts": 3, "sla": "99.6%", "owner": "Contact-Center-Core"},
         ]
     try:
         table = dynamodb.Table(JOURNEYS_TABLE)

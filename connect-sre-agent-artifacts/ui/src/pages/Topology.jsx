@@ -3,10 +3,28 @@ import GlobalTopology from '../components/widgets/GlobalTopology';
 import { useAppContext } from '../context/AppContext';
 import { RefreshCw } from 'lucide-react';
 
+const SELECT_STYLE = {
+  background: 'rgba(255,255,255,0.05)',
+  color: 'var(--text-primary)',
+  border: '1px solid var(--border-glass)',
+  padding: '0.5rem',
+  borderRadius: '4px',
+};
+
+// Maps dropdown label → node type values stored in topology data
+const COMPONENT_TYPE_MAP = {
+  'Contact Flows': ['CONTACT_FLOW'],
+  'Lex Bots':      ['LEX_BOT'],
+  'Queues':        ['QUEUE'],
+  'Lambdas':       ['LAMBDA'],
+};
+
 const Topology = () => {
   const { mode, activeInstance } = useAppContext();
   const [scanning, setScanning] = useState(false);
   const [scanMsg, setScanMsg] = useState('');
+  const [filterRegion, setFilterRegion] = useState('');
+  const [filterType, setFilterType] = useState('');
 
   const runDiscovery = async () => {
     setScanning(true);
@@ -31,18 +49,25 @@ const Topology = () => {
           {scanMsg && (
             <span style={{ fontSize: '0.8rem', color: 'var(--status-ok)', padding: '0 0.5rem' }}>{scanMsg}</span>
           )}
-          <select style={{ background: 'rgba(255,255,255,0.05)', color: 'var(--text-primary)', border: '1px solid var(--border-glass)', padding: '0.5rem', borderRadius: '4px' }}>
-            <option>All Regions</option>
-            <option>us-east-1</option>
-            <option>us-west-2</option>
-            <option>eu-west-1</option>
+          <select
+            style={SELECT_STYLE}
+            value={filterRegion}
+            onChange={e => setFilterRegion(e.target.value)}
+          >
+            <option value="">All Regions</option>
+            <option value="us-east-1">us-east-1</option>
+            <option value="us-west-2">us-west-2</option>
+            <option value="eu-west-1">eu-west-1</option>
           </select>
-          <select style={{ background: 'rgba(255,255,255,0.05)', color: 'var(--text-primary)', border: '1px solid var(--border-glass)', padding: '0.5rem', borderRadius: '4px' }}>
-            <option>All Components</option>
-            <option>Contact Flows</option>
-            <option>Lex Bots</option>
-            <option>Queues</option>
-            <option>Lambdas</option>
+          <select
+            style={SELECT_STYLE}
+            value={filterType}
+            onChange={e => setFilterType(e.target.value)}
+          >
+            <option value="">All Components</option>
+            {Object.keys(COMPONENT_TYPE_MAP).map(label => (
+              <option key={label} value={label}>{label}</option>
+            ))}
           </select>
           <button
             onClick={runDiscovery}
@@ -60,9 +85,14 @@ const Topology = () => {
           </button>
         </div>
       </div>
-      
+
       <div className="glass-panel" style={{ flex: 1, display: 'flex', flexDirection: 'column' }}>
-        <GlobalTopology mode={mode} instanceId={activeInstance?.instanceId || ''} />
+        <GlobalTopology
+          mode={mode}
+          instanceId={activeInstance?.instanceId || ''}
+          filterRegion={filterRegion}
+          filterTypes={filterType ? COMPONENT_TYPE_MAP[filterType] : null}
+        />
       </div>
     </div>
   );

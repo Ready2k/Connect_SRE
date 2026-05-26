@@ -36,12 +36,20 @@ echo "[2/3] Deploying Business Logic to Lambdas..."
 echo ""
 
 # Step 3: Fix Action Dispatcher KMS permissions
-echo "[3/3] Attaching KMS permissions to Action Dispatcher..."
-# We run the fix script we created earlier to ensure the role has KMS access
+echo "[3/4] Attaching KMS permissions to Action Dispatcher..."
 "$SCRIPT_DIR/fix_action_dispatcher_kms.sh"
+
+echo ""
+
+# Step 4: Seed DynamoDB tables and S3 runbooks
+echo "[4/4] Seeding DynamoDB tables and uploading runbooks..."
+bash "$SCRIPT_DIR/run_seeds.sh"
 
 echo ""
 echo "=========================================================="
 echo " Deployment Complete!"
 echo " Your AWS account now has the full Connect SRE Agent backend deployed."
+echo ""
+echo " To build and push the runtime container image:"
+echo "   bash $SCRIPT_DIR/build_and_push.sh"
 echo "=========================================================="

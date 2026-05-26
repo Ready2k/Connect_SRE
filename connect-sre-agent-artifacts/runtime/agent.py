@@ -95,15 +95,15 @@ class _GeminiSupervisor:
         from tools import (
             query_topology, calculate_blast_radius, query_recent_mutations,
             fetch_runbook, propose_remediation, query_connect_metrics,
-            query_cloudwatch_flow_logs, recall_prior_incidents,
-            record_investigation_memory,
+            query_connect_ctrs, query_cloudwatch_flow_logs,
+            recall_prior_incidents, record_investigation_memory,
         )
 
         tools = [
             query_topology, calculate_blast_radius, query_recent_mutations,
             fetch_runbook, propose_remediation, query_connect_metrics,
-            query_cloudwatch_flow_logs, recall_prior_incidents,
-            record_investigation_memory,
+            query_connect_ctrs, query_cloudwatch_flow_logs,
+            recall_prior_incidents, record_investigation_memory,
         ]
 
         if self._trace_fn:

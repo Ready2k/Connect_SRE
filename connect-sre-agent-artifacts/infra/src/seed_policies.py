@@ -79,6 +79,21 @@ def seed_policies(env="dev", region="us-west-2"):
         print(f"  Saving policy: {p['policyName']} ({p['policyId']})")
         policy_table.put_item(Item=p)
 
+    # AgentToolConfig — internal config record read by tools.py _get_agent_config().
+    # Not a policy; filtered out of the Policy UI by policyId check in main.py.
+    # Provides the default CloudWatch log group and CTR location used by the agent tools.
+    # Update these values to match your Connect instance after running the topology scanner.
+    print("  Saving internal config: AgentToolConfig")
+    policy_table.put_item(Item={
+        "policyId": "AgentToolConfig",
+        "enabled": True,
+        "config": {
+            "logGroupName": "/aws/connect/default",
+            "defaultTimeWindowMinutes": 60,
+            "ctrLocation": "s3://connect-ctr-bucket/",
+        },
+    })
+
     print("--- Policies Bootstrapped Successfully! ---")
 
 if __name__ == "__main__":
