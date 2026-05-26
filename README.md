@@ -7,8 +7,8 @@ This platform operates a **Multi-Agent System** that automatically investigates,
 ## Quick Start
 
 ```bash
-# 1. Build the Docker image (run from connect-sre-agent-artifacts/)
-docker build -t connect-sre-agent-runtime:latest -f runtime/Dockerfile .
+# 1. Build the Docker image
+./build.sh
 
 # 2. Start — interactive prompt selects Gemini or Bedrock and model
 ./start.sh

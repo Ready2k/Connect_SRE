@@ -48,7 +48,7 @@ run_python "3/4 journey" "$SRC_DIR/seed_journeys.py"
 #    once real Connect instance IDs are known)
 run_python "4/5 topo   " "$SRC_DIR/seed_topology.py"
 
-# 5. Runbooks (S3 upload) — runbooks/ lives two levels up at connect-sre-agent-artifacts/runbooks/
+# 5. Runbooks (S3 upload) — runbooks/ lives two levels up at the repo root
 RUNBOOKS_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)/runbooks"
 if [ -d "$RUNBOOKS_DIR" ]; then
   echo "[5/5 runbook] Uploading runbooks to S3..."

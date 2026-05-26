@@ -6,17 +6,15 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Connect SRE Agent — a domain-specific SRE platform for Amazon Connect. It detects contact flow regressions, correlates infrastructure changes to incidents, calculates blast radius, and recommends safe remediation actions. MVP is **read-only by default**; autonomous actions are disabled behind feature flags.
 
-All code lives under `connect-sre-agent-artifacts/`. AWS profile for all infrastructure operations is `connect-sre-dev` (us-west-2). The runtime container uses `connect-sre-runtime`.
+AWS profile for all infrastructure operations is `connect-sre-dev` (us-west-2). The runtime container uses `connect-sre-runtime`.
 
 ## Commands
 
 ### Runtime (Docker)
 
 ```bash
-cd connect-sre-agent-artifacts
-
-# Build the image (run from connect-sre-agent-artifacts/ — the Dockerfile is in runtime/)
-docker build -t connect-sre-agent-runtime:latest -f runtime/Dockerfile .
+# Build the image (Dockerfile is in runtime/)
+./build.sh
 
 # Start with interactive provider selection (Gemini or Bedrock)
 ./start.sh
@@ -32,7 +30,7 @@ docker build -t connect-sre-agent-runtime:latest -f runtime/Dockerfile .
 ### UI (React + Vite)
 
 ```bash
-cd connect-sre-agent-artifacts/ui
+cd ui
 npm install
 npm run dev      # Vite dev server → http://localhost:5173 (proxies /api/* to :8000)
 npm run build    # Production build → dist/  (built into Docker image)
@@ -44,17 +42,17 @@ npm run lint
 All scripts require `--profile connect-sre-dev` (already embedded). Run from repo root:
 
 ```bash
-./connect-sre-agent-artifacts/infra/scripts/deploy_normalizer.sh
-./connect-sre-agent-artifacts/infra/scripts/deploy_topology_scanner.sh
-./connect-sre-agent-artifacts/infra/scripts/test_normalizer.sh       # fires synthetic CloudWatch alarm
-./connect-sre-agent-artifacts/infra/scripts/test_topology_scanner.sh # triggers full scan
-./connect-sre-agent-artifacts/infra/scripts/update_dev_ip.sh         # update security group with current public IP
+./infra/scripts/deploy_normalizer.sh
+./infra/scripts/deploy_topology_scanner.sh
+./infra/scripts/test_normalizer.sh       # fires synthetic CloudWatch alarm
+./infra/scripts/test_topology_scanner.sh # triggers full scan
+./infra/scripts/update_dev_ip.sh         # update security group with current public IP
 ```
 
 ### Lambda functions (local execution)
 
 ```bash
-cd connect-sre-agent-artifacts/infra/src
+cd infra/src
 TOPOLOGY_TABLE_NAME=dev-connect-sre-topology \
 CONNECT_INSTANCE_IDS=<id1>,<id2> \
 python topology_scanner.py
@@ -66,7 +64,7 @@ python topology_scanner.py
 
 ```bash
 aws cloudformation deploy \
-  --template-file connect-sre-agent-artifacts/infra/cloudformation/connect-sre-agent-platform.yaml \
+  --template-file infra/cloudformation/connect-sre-agent-platform.yaml \
   --stack-name dev-connect-sre-platform \
   --parameter-overrides EnvironmentName=dev AllowedAdminCIDR=<your-ip>/32 \
   --capabilities CAPABILITY_NAMED_IAM \
@@ -177,9 +175,9 @@ The agent's blast-radius, flow-health, and module-dependency specialists all rea
 
 To populate for a Connect instance:
 ```bash
-./connect-sre-agent-artifacts/infra/scripts/test_topology_scanner.sh
+./infra/scripts/test_topology_scanner.sh
 # or manually:
-cd connect-sre-agent-artifacts/infra/src
+cd infra/src
 TOPOLOGY_TABLE_NAME=dev-connect-sre-topology CONNECT_INSTANCE_IDS=<uuid> python topology_scanner.py
 ```
 
