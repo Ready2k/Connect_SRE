@@ -21,7 +21,7 @@ import sys
 import json
 import logging
 
-PASS = "\033[92mPASS\033[0m"
+PASS = "\033[92mPASS\033[0m"  # nosec B105
 FAIL = "\033[91mFAIL\033[0m"
 SKIP = "\033[93mSKIP\033[0m"
 

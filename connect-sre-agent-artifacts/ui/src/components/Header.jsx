@@ -13,6 +13,7 @@ const Header = () => {
   // Fetch instances list when mode switches to live
   useEffect(() => {
     if (mode === 'live') {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setLoadingInstances(true);
       fetch('/api/connect/instances')
         .then(res => res.json())

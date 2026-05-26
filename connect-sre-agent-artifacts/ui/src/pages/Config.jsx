@@ -40,7 +40,7 @@ const Config = () => {
         setPrimaryModel('gemini-3.5-flash');
       })
       .finally(() => setLoading(false));
-  }, []);
+  }, [mode]);
 
   const handleSave = () => {
     setSaveStatus('saving');

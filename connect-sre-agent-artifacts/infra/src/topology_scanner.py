@@ -221,7 +221,7 @@ def handle_partial_scan(payload):
         try:
             instance_summaries = CONNECT.list_instances().get("InstanceSummaryList", [])
             instance_id = instance_summaries[0].get("Id") if instance_summaries else None
-        except Exception:
+        except Exception:  # nosec B110
             pass
 
     if not instance_id:

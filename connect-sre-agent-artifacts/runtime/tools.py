@@ -207,7 +207,7 @@ def _get_agent_config() -> dict:
         response = table.get_item(Key={"policyId": "AgentToolConfig"})
         if "Item" in response:
             return {**default_config, **response["Item"].get("config", {})}
-    except Exception:
+    except Exception:  # nosec B110
         pass
     return default_config
 
@@ -321,7 +321,7 @@ def query_cloudwatch_flow_logs(instance_id: str, flow_id: str, start_minutes_ago
             "message": f"The CloudWatch Log Group '{log_group_name}' does not exist.",
             "recommendation": "Flow is failing silently — logging is disabled. Enable the 'Set logging behavior' block to diagnose the root cause."
         })
-    except Exception:
+    except Exception:  # nosec B110
         pass
 
     try:

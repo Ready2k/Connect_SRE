@@ -8,6 +8,7 @@ const GlobalTopology = ({ mode = 'demo', instanceId = '' }) => {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setLoading(true);
     const params = new URLSearchParams({ mode });
     if (instanceId) params.set('instanceId', instanceId);

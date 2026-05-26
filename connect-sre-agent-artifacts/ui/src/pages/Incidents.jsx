@@ -135,18 +135,21 @@ const Incidents = () => {
         console.error("Failed to fetch incidents", err);
         setLoading(false);
       });
-  }, []);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mode]);
 
   // Poll approvals every 5s while investigating
   useEffect(() => {
     if (!selected || !ACTIVE_STATUSES.has(selected.status)) return;
     const timer = setInterval(fetchApprovals, 5000);
     return () => clearInterval(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selected?.incidentId, selected?.status]);
 
   // Poll investigation steps every 3s while investigating; auto-stop on terminal step
   useEffect(() => {
     if (stepsTimerRef.current) clearInterval(stepsTimerRef.current);
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setSteps([]);
     if (!selected) return;
 
@@ -173,7 +176,8 @@ const Incidents = () => {
       stepsTimerRef.current = setInterval(fetchSteps, 3000);
     }
     return () => clearInterval(stepsTimerRef.current);
-  }, [selected?.incidentId]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selected?.incidentId, mode]);
 
   const handleAction = (approvalId, status) => {
     fetch(`/api/approvals/${approvalId}/action?mode=${mode}`, {

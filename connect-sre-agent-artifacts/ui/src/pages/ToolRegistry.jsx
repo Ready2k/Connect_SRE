@@ -18,7 +18,7 @@ const ToolRegistry = () => {
         console.error("Failed to fetch tools", err);
         setLoading(false);
       });
-  }, []);
+  }, [mode]);
 
   return (
     <div style={{ padding: '1rem', height: '100%', overflowY: 'auto' }}>

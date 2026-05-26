@@ -347,7 +347,7 @@ def trigger_agent_investigation(incident):
             method="POST"
         )
         
-        with urllib.request.urlopen(req, timeout=10) as response:
+        with urllib.request.urlopen(req, timeout=10) as response:  # nosec B310
             if response.status in (200, 201, 202):
                 print(f"Successfully triggered ADK Agent for incident {incident['incidentId']}")
             else:

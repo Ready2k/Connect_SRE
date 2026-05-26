@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useMemo } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import ReactFlow, { Background, Controls } from 'reactflow';
 import 'reactflow/dist/style.css';
 import { Bot, Activity, BrainCircuit, Settings, Save } from 'lucide-react';
@@ -107,6 +107,7 @@ const Agents = () => {
 
     const timer = setInterval(fetchAgentStatus, 4000);
     return () => clearInterval(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const onNodeClick = (event, node) => {

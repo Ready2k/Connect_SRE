@@ -18,7 +18,7 @@ const Policy = () => {
         console.error("Failed to fetch policies", err);
         setLoading(false);
       });
-  }, []);
+  }, [mode]);
 
   const togglePolicy = async (index) => {
     const newPolicies = [...policies];

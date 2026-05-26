@@ -17,7 +17,7 @@ const PendingApprovals = () => {
         console.error("Failed to fetch approvals", err);
         setLoading(false);
       });
-  }, []);
+  }, [mode]);
 
   const handleAction = (approvalId, status) => {
     fetch(`/api/approvals/${approvalId}/action?mode=${mode}`, {

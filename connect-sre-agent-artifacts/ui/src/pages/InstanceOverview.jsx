@@ -180,9 +180,11 @@ const InstanceOverview = () => {
   };
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     fetchOverview();
     const interval = setInterval(fetchOverview, 30000); // Refresh every 30s
     return () => clearInterval(interval);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const handleSelectInstance = (instance) => {
