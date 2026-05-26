@@ -19,8 +19,32 @@ _ACTIVE_MODEL_LABEL = (
     BEDROCK_MODEL_ID if MODEL_PROVIDER == "bedrock" else "gemini-3.5-flash"
 )
 
-# Configure logging
-logging.basicConfig(level=logging.INFO)
+# ---------------------------------------------------------------------------
+# Structured JSON logging — makes every line queryable in CloudWatch Logs
+# Insights via: fields @timestamp, level, message, incidentId, runId
+# ---------------------------------------------------------------------------
+
+class _JsonFormatter(logging.Formatter):
+    """Emit one JSON object per log line including any LoggerAdapter extras."""
+    def format(self, record: logging.LogRecord) -> str:
+        payload: Dict[str, Any] = {
+            "ts": self.formatTime(record, "%Y-%m-%dT%H:%M:%S"),
+            "level": record.levelname,
+            "logger": record.name,
+            "message": record.getMessage(),
+        }
+        # Propagate any extra fields (incidentId, runId, …) added via LoggerAdapter
+        for key in ("incidentId", "runId", "operator", "approvalId"):
+            if hasattr(record, key):
+                payload[key] = getattr(record, key)
+        if record.exc_info:
+            payload["exception"] = self.formatException(record.exc_info)
+        return json.dumps(payload)
+
+_handler = logging.StreamHandler()
+_handler.setFormatter(_JsonFormatter())
+logging.root.setLevel(logging.INFO)
+logging.root.handlers = [_handler]
 logger = logging.getLogger(__name__)
 
 app = FastAPI(title="Amazon Connect SRE Agent Runtime")
@@ -140,8 +164,10 @@ def _write_trace(run_id: str, incident_id: str, started_at: str, latency_ms: int
 
 
 async def investigate_incident_background(payload: IncidentPayload):
-    logger.info(f"Starting investigation for incident {payload.incidentId}")
     run_id = f"run-{uuid.uuid4().hex[:8]}"
+    # Scoped adapter threads incidentId + runId into every log line for this investigation
+    inv_log = logging.LoggerAdapter(logger, {"incidentId": payload.incidentId, "runId": run_id})
+    inv_log.info("Investigation started severity=%s source=%s model=%s", payload.severity, payload.source, _ACTIVE_MODEL_LABEL)
     started_at = datetime.utcnow().isoformat() + "Z"
     start_time = time.time()
 
@@ -173,7 +199,7 @@ async def investigate_incident_background(payload: IncidentPayload):
             response = await supervisor.chat(prompt)
             final_report = await response.text()
             latency_ms = int((time.time() - start_time) * 1000)
-            logger.info(f"Investigation Complete for {payload.incidentId}. Final Report:\n{final_report}")
+            inv_log.info("Investigation complete latency_ms=%d report_chars=%d", latency_ms, len(final_report))
             _add_step(payload.incidentId, {
                 "ts": datetime.utcnow().isoformat() + "Z",
                 "type": "complete",
@@ -184,7 +210,7 @@ async def investigate_incident_background(payload: IncidentPayload):
             _write_trace(run_id, payload.incidentId, started_at, latency_ms, "success", final_report[:2000])
     except Exception as e:
         latency_ms = int((time.time() - start_time) * 1000)
-        logger.error(f"Agent execution failed for incident {payload.incidentId}: {str(e)}")
+        inv_log.error("Investigation failed latency_ms=%d error=%s", latency_ms, str(e))
         is_quota = "429" in str(e) or "quota" in str(e).lower() or "RESOURCE_EXHAUSTED" in str(e)
         failure_status = "Failed - Rate Limited" if is_quota else "Failed"
         error_summary = "Gemini API free-tier quota exhausted. Upgrade API key or switch to Bedrock." if is_quota else str(e)[:500]
@@ -204,7 +230,7 @@ async def investigate_incident_background(payload: IncidentPayload):
                 ExpressionAttributeValues={':s': failure_status}
             )
         except Exception as db_err:
-            logger.error(f"Failed to update incident status after agent error: {db_err}")
+            inv_log.error("Failed to update incident status after agent error: %s", db_err)
 
 @app.get("/health")
 async def health_check():

@@ -18,7 +18,7 @@ DEDUPE_WINDOW_MINUTES = int(os.environ.get("DEDUPE_WINDOW_MINUTES", "30"))
 
 
 def handler(event, context):
-    print(f"Normalizer received event: {json.dumps(event)}")
+    print(json.dumps({"event": "normalizer_invoked", "source": event.get("source"), "detail_type": event.get("detail-type")}))
 
     # 1. Parse EventBridge signals
     source = event.get("source", "")
@@ -347,14 +347,12 @@ def trigger_topology_refresh(incident):
     SQS.send_message(
         QueueUrl=TOPOLOGY_REFRESH_QUEUE_URL, MessageBody=json.dumps(payload)
     )
-    print(
-        f"Requested partial topology refresh for resource {incident['connectResourceId']} via SQS."
-    )
+    print(json.dumps({"event": "topology_refresh_queued", "incidentId": incident["incidentId"], "resourceId": incident["connectResourceId"], "resourceType": resource_type}))
 
 
 def trigger_agent_investigation(incident):
     if not AGENT_API_URL:
-        print(f"WARNING: AGENT_API_URL not set. Incident {incident['incidentId']} saved but ADK agent not triggered.")
+        print(json.dumps({"event": "agent_trigger_skipped", "incidentId": incident["incidentId"], "reason": "AGENT_API_URL not configured"}))
         return
 
     # Call the ADK Agent API
@@ -367,15 +365,18 @@ def trigger_agent_investigation(incident):
         req = urllib.request.Request(
             url,
             data=payload,
-            headers={"Content-Type": "application/json"},
+            headers={
+                "Content-Type": "application/json",
+                "X-Incident-Id": incident["incidentId"],
+            },
             method="POST"
         )
-        
+
         with urllib.request.urlopen(req, timeout=10) as response:  # nosec B310
             if response.status in (200, 201, 202):
-                print(f"Successfully triggered ADK Agent for incident {incident['incidentId']}")
+                print(json.dumps({"event": "agent_triggered", "incidentId": incident["incidentId"], "agentUrl": url}))
             else:
-                print(f"Failed to trigger ADK Agent. Status: {response.status}")
-                
+                print(json.dumps({"event": "agent_trigger_failed", "incidentId": incident["incidentId"], "httpStatus": response.status}))
+
     except Exception as e:
-        print(f"ERROR: Failed to call ADK Agent API at {AGENT_API_URL}: {str(e)}")
+        print(json.dumps({"event": "agent_trigger_error", "incidentId": incident.get("incidentId"), "error": str(e)}))

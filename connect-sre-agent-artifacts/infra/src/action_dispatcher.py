@@ -23,7 +23,7 @@ ENABLE_AUTONOMOUS_ACTIONS = (
 
 
 def handler(event, context):
-    print(f"Action Dispatcher received invocation event: {json.dumps(event)}")
+    print(json.dumps({"event": "dispatcher_invoked", "approvalId": event.get("approvalId"), "actionType": event.get("actionType"), "incidentId": event.get("incidentId"), "operator": event.get("operator", "system")}))
 
     approval_id = event.get("approvalId")
     action_type = event.get("actionType")  # e.g. "connect_toggle_emergency_routing"
@@ -70,7 +70,7 @@ def handler(event, context):
         return {"status": "DISPATCHED", "executionId": execution_id, "timestamp": now}
 
     except Exception as e:
-        print(f"Failed to dispatch action: {str(e)}")
+        print(json.dumps({"event": "dispatch_error", "approvalId": approval_id, "incidentId": incident_id, "error": str(e)}))
         raise e
 
 
@@ -97,21 +97,19 @@ def verify_tool_registration(action_type):
 def evaluate_policy_gates(policy, operator, approval_id):
     # Rule A: If Connect writes are disabled completely at the stack level, block
     if not ENABLE_CONNECT_WRITE_ACTIONS:
-        print("Connect write actions are disabled at the stack level.")
+        print(json.dumps({"event": "policy_gate_blocked", "rule": "A", "reason": "ENABLE_CONNECT_WRITE_ACTIONS=false"}))
         return False
 
     risk_level = policy.get("riskLevel", "high")
 
     # Rule B: High risk actions require approval
     if risk_level == "high" and not approval_id:
-        print("High risk action attempted without an approved ticket.")
+        print(json.dumps({"event": "policy_gate_blocked", "rule": "B", "reason": "high_risk_without_approval_ticket", "riskLevel": risk_level}))
         return False
 
     # Rule C: Auto remediation requires explicit switch
     if operator == "system" and not ENABLE_AUTONOMOUS_ACTIONS:
-        print(
-            "Autonomous system execution is blocked. EnableAutonomousActions is false."
-        )
+        print(json.dumps({"event": "policy_gate_blocked", "rule": "C", "reason": "ENABLE_AUTONOMOUS_ACTIONS=false", "operator": operator}))
         return False
 
     # Rule D: If approval ticket is provided, make sure it is marked APPROVED in database
@@ -119,17 +117,15 @@ def evaluate_policy_gates(policy, operator, approval_id):
         table = DYNAMODB.Table(APPROVAL_TABLE_NAME)
         ticket = table.get_item(Key={"approvalId": approval_id}).get("Item", {})
         if ticket.get("status") != "APPROVED":
-            print(f"Approval ticket {approval_id} is not in APPROVED state.")
+            print(json.dumps({"event": "policy_gate_blocked", "rule": "D", "approvalId": approval_id, "ticketStatus": ticket.get("status"), "reason": "ticket_not_approved"}))
             return False
 
+    print(json.dumps({"event": "policy_gates_passed", "approvalId": approval_id, "operator": operator, "riskLevel": risk_level}))
     return True
 
 
 def execute_remediation(action_type, parameters):
-    # Triggers safe SSM document executions
-    print(
-        f"Executing target remediation action '{action_type}' with parameters: {parameters}"
-    )
+    print(json.dumps({"event": "remediation_executing", "actionType": action_type, "parameters": parameters}))
 
     # Determine mock run vs actual SSM
     # In Dev MVP, we simulate execution to avoid breaking active stacks
@@ -199,7 +195,7 @@ def log_successful_dispatch(approval_id, incident_id, action_type, execution_id,
                 ":now": now,
             },
         )
-    print("Action dispatch execution audit updated in state tables.")
+    print(json.dumps({"event": "dispatch_complete", "approvalId": approval_id, "incidentId": incident_id, "actionType": action_type, "executionId": execution_id, "operator": operator}))
 
 
 def uuid_hash():
