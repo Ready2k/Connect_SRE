@@ -9,6 +9,7 @@ cd "$(dirname "$0")"
 
 STACK_NAME="dev-connect-sre-platform"
 TEMPLATE_FILE="../cloudformation/connect-sre-agent-platform.yaml"
+PROFILE_ARG=${AWS_PROFILE:+--profile "$AWS_PROFILE"}
 
 echo "Fetching your current public IP address..."
 CURRENT_IP=$(curl -s http://checkip.amazonaws.com)
@@ -25,6 +26,6 @@ aws cloudformation deploy \
   --stack-name $STACK_NAME \
   --parameter-overrides EnvironmentName=dev AllowedAdminCIDR=$CURRENT_IP/32 \
   --capabilities CAPABILITY_NAMED_IAM \
-  --profile connect-sre-dev
+  $PROFILE_ARG
 
 echo "Security Group successfully updated!"

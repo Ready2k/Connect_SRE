@@ -1,4 +1,5 @@
 import os
+import json
 import logging
 import random
 import time
@@ -37,6 +38,8 @@ RUNBOOKS_BUCKET = os.environ.get("RUNBOOKS_BUCKET_NAME", "dev-connect-sre-runboo
 TRACE_TABLE_NAME = os.environ.get("AGENT_RUNS_TABLE_NAME", "dev-connect-sre-agent-runs")
 
 s3_client = boto3.client("s3", region_name=os.environ.get("AWS_REGION", os.environ.get("AWS_DEFAULT_REGION", "us-west-2")))
+lambda_client = boto3.client("lambda", region_name=os.environ.get("AWS_REGION", os.environ.get("AWS_DEFAULT_REGION", "us-west-2")))
+ACTION_DISPATCHER_LAMBDA_NAME = os.environ.get("ACTION_DISPATCHER_LAMBDA_NAME", "dev-connect-sre-action-dispatcher")
 
 def is_active_incident(item: dict) -> bool:
     status = item.get("status", "").lower()
@@ -640,6 +643,28 @@ async def action_approval(approval_id: str, payload: dict, mode: str = Query("de
             ExpressionAttributeNames={'#s': 'status'},
             ExpressionAttributeValues={':s': status, ':j': justification}
         )
+        
+        if status == "APPROVED":
+            # Fetch the ticket details to pass to dispatcher
+            item = table.get_item(Key={'approvalId': approval_id}).get('Item', {})
+            payload = {
+                "approvalId": approval_id,
+                "actionType": item.get("actionType"),
+                "parameters": item.get("parameters", {}),
+                "operator": "operator_from_ui",
+                "incidentId": item.get("incidentId")
+            }
+            try:
+                lambda_client.invoke(
+                    FunctionName=ACTION_DISPATCHER_LAMBDA_NAME,
+                    InvocationType='Event', # Async invocation
+                    Payload=json.dumps(payload)
+                )
+                logger.info(f"Invoked action dispatcher for approval {approval_id}")
+            except Exception as lambda_err:
+                logger.error(f"Failed to invoke action dispatcher lambda: {lambda_err}")
+                # We don't fail the request since the DB was updated, the dispatcher can be re-triggered or logged.
+
         return {"status": "success", "approvalId": approval_id, "newStatus": status}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

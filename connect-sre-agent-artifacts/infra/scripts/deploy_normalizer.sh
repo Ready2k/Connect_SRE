@@ -8,6 +8,9 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SRC_DIR="$SCRIPT_DIR/../src"
 BUILD_DIR="$SCRIPT_DIR/../build"
 
+AGENT_API_URL=${AGENT_API_URL:-"http://localhost:8000"}
+PROFILE_ARG=${AWS_PROFILE:+--profile "$AWS_PROFILE"}
+
 echo "Deploying Normalizer Lambda..."
 
 # Ensure build directory exists
@@ -28,22 +31,22 @@ aws lambda update-function-code \
     --function-name "$LAMBDA_NAME" \
     --zip-file "fileb://normalizer.zip" \
     --region "$REGION" \
-    --profile connect-sre-dev > /dev/null
+    $PROFILE_ARG > /dev/null
 
 # Wait for code update to complete before changing config
 echo "Waiting for code update to propagate..."
 aws lambda wait function-updated \
     --function-name "$LAMBDA_NAME" \
     --region "$REGION" \
-    --profile connect-sre-dev
+    $PROFILE_ARG
 
 # Update Lambda environment variables
 echo "Updating Lambda environment variables..."
 aws lambda update-function-configuration \
     --function-name "$LAMBDA_NAME" \
-    --environment "Variables={INCIDENT_TABLE_NAME=dev-connect-sre-incidents,EVIDENCE_BUCKET_NAME=dev-connect-sre-evidence-388660028061-us-west-2,TOPOLOGY_REFRESH_QUEUE_URL=https://sqs.us-west-2.amazonaws.com/388660028061/dev-connect-sre-topology-refresh,AGENT_API_URL=http://localhost:8000,CONNECT_INSTANCE_ID=8dc186bb-1a4b-42ab-b91b-d8acd52f00fc,DEDUPE_WINDOW_MINUTES=30}" \
+    --environment "Variables={INCIDENT_TABLE_NAME=dev-connect-sre-incidents,EVIDENCE_BUCKET_NAME=dev-connect-sre-evidence-388660028061-us-west-2,TOPOLOGY_REFRESH_QUEUE_URL=https://sqs.us-west-2.amazonaws.com/388660028061/dev-connect-sre-topology-refresh,AGENT_API_URL=${AGENT_API_URL},CONNECT_INSTANCE_ID=8dc186bb-1a4b-42ab-b91b-d8acd52f00fc,DEDUPE_WINDOW_MINUTES=30}" \
     --region "$REGION" \
-    --profile connect-sre-dev > /dev/null
+    $PROFILE_ARG > /dev/null
 
 echo "Deployment successful."
 
