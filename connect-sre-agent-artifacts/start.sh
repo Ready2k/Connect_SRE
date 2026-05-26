@@ -56,8 +56,11 @@ esac
 
 echo ""
 
-# Stop any existing container
-EXISTING=$(docker ps -q --filter ancestor=connect-sre-agent-runtime:latest)
+# Stop any existing container (find by port binding to catch stale builds)
+EXISTING=$(docker ps -q --filter publish=8000)
+if [[ -z "$EXISTING" ]]; then
+  EXISTING=$(docker ps -q --filter ancestor=connect-sre-agent-runtime:latest)
+fi
 if [[ -n "$EXISTING" ]]; then
   echo "Stopping existing container..."
   docker stop "$EXISTING" > /dev/null
