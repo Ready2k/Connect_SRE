@@ -50,7 +50,7 @@ def handler(event, context):
         elif source == "connect-sre.schedule":
             normalized_incident = handle_proactive_check(event)
         else:
-            print(f"Received unclassified event from source '{source}', ignoring.")
+            print(json.dumps({"event": "unclassified_source", "source": source, "detail_type": detail_type}))
             return {"ok": True, "message": "unclassified_source"}
 
         if normalized_incident:
@@ -80,7 +80,7 @@ def parse_cloudwatch_alarm(event):
     state = detail.get("state", {}).get("value", "UNKNOWN")
 
     if state != "ALARM":
-        print(f"Alarm {alarm_name} transitioned to {state}, ignoring.")
+        print(json.dumps({"event": "alarm_ignored", "alarmName": alarm_name, "state": state}))
         return None
 
     now = datetime.datetime.utcnow().isoformat() + "Z"
@@ -277,15 +277,39 @@ def save_incident(incident, raw_event):
 
     if existing_incidents:
         latest = existing_incidents[0]
-        # Deduplicate: if an open incident of same type exists within last DEDUPE_WINDOW_MINUTES, ignore or merge
         latest_created_at = parse_date(latest["createdAt"])
         now_dt = parse_date(incident["createdAt"])
-        if (now_dt - latest_created_at).total_seconds() < (DEDUPE_WINDOW_MINUTES * 60):
-            # Write a new version but reference the parent incident.
+        age_seconds = (now_dt - latest_created_at).total_seconds()
+        if age_seconds < (DEDUPE_WINDOW_MINUTES * 60):
             incident["parentId"] = latest["incidentId"]
+            incident["dedupeDecision"] = "merged"
+            incident["dedupeParentAgeSeconds"] = int(age_seconds)
+            print(json.dumps({
+                "event": "dedupe_merge",
+                "newIncidentId": incident["incidentId"],
+                "parentIncidentId": latest["incidentId"],
+                "dedupeKey": dedupe_key,
+                "parentAgeSeconds": int(age_seconds),
+                "windowSeconds": DEDUPE_WINDOW_MINUTES * 60,
+            }))
+        else:
+            print(json.dumps({
+                "event": "dedupe_new_incident",
+                "incidentId": incident["incidentId"],
+                "dedupeKey": dedupe_key,
+                "priorIncidentAge": int(age_seconds),
+                "reason": f"Prior incident too old ({int(age_seconds)}s > {DEDUPE_WINDOW_MINUTES * 60}s window)",
+            }))
 
     table.put_item(Item=incident)
-    print(f"Incident {incident['incidentId']} saved to DynamoDB.")
+    print(json.dumps({
+        "event": "incident_saved",
+        "incidentId": incident["incidentId"],
+        "severity": incident.get("severity"),
+        "isMutation": incident.get("isMutation", False),
+        "parentId": incident.get("parentId"),
+        "dedupeKey": dedupe_key,
+    }))
 
     # Save raw EventBridge payload to S3 Evidence Bucket
     if EVIDENCE_BUCKET_NAME:

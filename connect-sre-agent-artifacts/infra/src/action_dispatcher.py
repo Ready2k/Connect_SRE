@@ -30,6 +30,7 @@ def handler(event, context):
     parameters = event.get("parameters", {})
     operator = event.get("operator", "system")
     incident_id = event.get("incidentId")
+    actioned_at = event.get("actionedAt")
 
     now = datetime.datetime.utcnow().isoformat() + "Z"
 
@@ -63,7 +64,7 @@ def handler(event, context):
 
         # 4. Log Success
         log_successful_dispatch(
-            approval_id, incident_id, action_type, execution_id, now
+            approval_id, incident_id, action_type, execution_id, now, operator, actioned_at
         )
 
         return {"status": "DISPATCHED", "executionId": execution_id, "timestamp": now}
@@ -149,35 +150,39 @@ def execute_remediation(action_type, parameters):
     return simulated_execution_id
 
 
-def deny_execution(approval_id, incident_id, action_type, reason, now):
-    print(f"Action Denied: {reason}")
+def deny_execution(approval_id, incident_id, action_type, reason, now, operator="system"):
+    print(f"Action Denied: action_type={action_type} operator={operator} reason={reason}")
     if approval_id:
         table = DYNAMODB.Table(APPROVAL_TABLE_NAME)
         table.update_item(
             Key={"approvalId": approval_id},
-            UpdateExpression="SET #s = :status, auditLog = :log, updatedAt = :now",
+            UpdateExpression="SET #s = :status, auditLog = :log, updatedAt = :now, operatorId = :op",
             ExpressionAttributeNames={"#s": "status"},
             ExpressionAttributeValues={
                 ":status": "BLOCKED",
                 ":log": reason,
                 ":now": now,
+                ":op": operator,
             },
         )
-    return {"status": "DENIED", "reason": reason, "timestamp": now}
+    return {"status": "DENIED", "reason": reason, "timestamp": now, "operator": operator}
 
 
-def log_successful_dispatch(approval_id, incident_id, action_type, execution_id, now):
+def log_successful_dispatch(approval_id, incident_id, action_type, execution_id, now, operator="system", actioned_at=None):
+    print(f"Action Dispatched: action_type={action_type} executionId={execution_id} operator={operator}")
     # Mark approval ticket as executed
     if approval_id:
         table = DYNAMODB.Table(APPROVAL_TABLE_NAME)
         table.update_item(
             Key={"approvalId": approval_id},
-            UpdateExpression="SET #s = :status, executionId = :exec, executedAt = :now",
+            UpdateExpression="SET #s = :status, executionId = :exec, executedAt = :now, operatorId = :op, approvedAt = :aat",
             ExpressionAttributeNames={"#s": "status"},
             ExpressionAttributeValues={
                 ":status": "EXECUTED",
                 ":exec": execution_id,
                 ":now": now,
+                ":op": operator,
+                ":aat": actioned_at or now,
             },
         )
 

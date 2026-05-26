@@ -653,43 +653,50 @@ async def get_approvals(mode: str = Query("demo")):
         return []
 
 @app.post("/api/approvals/{approval_id}/action")
-async def action_approval(approval_id: str, payload: dict, mode: str = Query("demo")):
+async def action_approval(approval_id: str, request: Request, payload: dict, mode: str = Query("demo")):
     if mode == "demo":
         return {"status": "success", "approvalId": approval_id, "newStatus": payload.get("status", "REJECTED")}
     try:
         table = dynamodb.Table(APPROVAL_TABLE)
         status = payload.get("status", "REJECTED")
         justification = payload.get("justification", "")
-        
+        operator_id = payload.get("operatorId") or request.headers.get("X-Operator-Id", "unknown")
+        actioned_at = datetime.utcnow().isoformat() + "Z"
+
         table.update_item(
             Key={'approvalId': approval_id},
-            UpdateExpression="SET #s = :s, operatorJustification = :j",
+            UpdateExpression="SET #s = :s, operatorJustification = :j, operatorId = :op, actionedAt = :at",
             ExpressionAttributeNames={'#s': 'status'},
-            ExpressionAttributeValues={':s': status, ':j': justification}
+            ExpressionAttributeValues={
+                ':s': status,
+                ':j': justification,
+                ':op': operator_id,
+                ':at': actioned_at,
+            }
         )
-        
+        logger.info("Approval %s set to %s by operator=%s", approval_id, status, operator_id)
+
         if status == "APPROVED":
-            # Fetch the ticket details to pass to dispatcher
             item = table.get_item(Key={'approvalId': approval_id}).get('Item', {})
-            payload = {
+            dispatcher_payload = {
                 "approvalId": approval_id,
                 "actionType": item.get("actionType"),
                 "parameters": item.get("parameters", {}),
-                "operator": "operator_from_ui",
-                "incidentId": item.get("incidentId")
+                "operator": operator_id,
+                "incidentId": item.get("incidentId"),
+                "actionedAt": actioned_at,
             }
             try:
                 lambda_client.invoke(
                     FunctionName=ACTION_DISPATCHER_LAMBDA_NAME,
-                    InvocationType='Event', # Async invocation
-                    Payload=json.dumps(payload)
+                    InvocationType='Event',
+                    Payload=json.dumps(dispatcher_payload)
                 )
-                logger.info(f"Invoked action dispatcher for approval {approval_id}")
+                logger.info("Invoked action dispatcher for approval %s operator=%s", approval_id, operator_id)
             except Exception as lambda_err:
-                logger.error(f"Failed to invoke action dispatcher lambda: {lambda_err}")
-                # We don't fail the request since the DB was updated, the dispatcher can be re-triggered or logged.
+                logger.error("Failed to invoke action dispatcher lambda: %s", lambda_err)
 
-        return {"status": "success", "approvalId": approval_id, "newStatus": status}
+        return {"status": "success", "approvalId": approval_id, "newStatus": status, "operatorId": operator_id, "actionedAt": actioned_at}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
