@@ -18,11 +18,6 @@ Parameters:
     Default: dev
     AllowedPattern: '^[a-zA-Z0-9-]+$'
 
-  AgentRuntimeImageUri:
-    Type: String
-    Default: placeholder.dkr.ecr.eu-west-2.amazonaws.com/connect-sre-agent-runtime:latest
-    Description: Container image URI for ADK runtime service.
-
   ConnectInstanceIds:
     Type: CommaDelimitedList
     Default: ''
@@ -56,12 +51,7 @@ Parameters:
       - 'true'
       - 'false'
 
-  RequireApprovalForMediumRisk:
-    Type: String
-    Default: 'true'
-    AllowedValues:
-      - 'true'
-      - 'false'
+
 
   EvidenceRetentionDays:
     Type: Number
@@ -71,20 +61,8 @@ Parameters:
     Type: Number
     Default: 180
 
-  AllowedAdminCIDR:
-    Type: String
-    Default: 0.0.0.0/0
-    Description: CIDR allowed to reach admin endpoints in MVP. Tighten outside demos.
 
-  NotificationWebhookSecretArn:
-    Type: String
-    Default: ''
-    Description: Optional Secrets Manager ARN for Slack/Teams webhook.
 
-Conditions:
-  HasNotificationWebhook: !Not [!Equals [!Ref NotificationWebhookSecretArn, '']]
-  ConnectWriteActionsEnabled: !Equals [!Ref EnableConnectWriteActions, 'true']
-  AutonomousActionsEnabled: !Equals [!Ref EnableAutonomousActions, 'true']
 
 Resources:
   ConnectSreKmsKey:
@@ -101,6 +79,20 @@ Resources:
               AWS: !Sub 'arn:aws:iam::${AWS::AccountId}:root'
             Action: 'kms:*'
             Resource: '*'
+          - Sid: AllowCloudWatchLogs
+            Effect: Allow
+            Principal:
+              Service: !Sub 'logs.${AWS::Region}.amazonaws.com'
+            Action:
+              - kms:Encrypt
+              - kms:Decrypt
+              - kms:ReEncrypt*
+              - kms:GenerateDataKey
+              - kms:DescribeKey
+            Resource: '*'
+            Condition:
+              ArnLike:
+                'kms:EncryptionContext:aws:logs:arn': !Sub 'arn:aws:logs:${AWS::Region}:${AWS::AccountId}:*'
 
   ConnectSreKmsAlias:
     Type: AWS::KMS::Alias
@@ -453,6 +445,61 @@ Resources:
           Projection:
             ProjectionType: ALL
 
+  AgentStepsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub '${EnvironmentName}-connect-sre-agent-steps'
+      BillingMode: PAY_PER_REQUEST
+      SSESpecification:
+        SSEEnabled: true
+        KMSMasterKeyId: !Ref ConnectSreKmsKey
+        SSEType: KMS
+      AttributeDefinitions:
+        - AttributeName: incidentId
+          AttributeType: S
+        - AttributeName: seq
+          AttributeType: N
+      KeySchema:
+        - AttributeName: incidentId
+          KeyType: HASH
+        - AttributeName: seq
+          KeyType: RANGE
+      TimeToLiveSpecification:
+        AttributeName: ttl
+        Enabled: true
+
+  AgentMemoryTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub '${EnvironmentName}-connect-sre-memory'
+      BillingMode: PAY_PER_REQUEST
+      SSESpecification:
+        SSEEnabled: true
+        KMSMasterKeyId: !Ref ConnectSreKmsKey
+        SSEType: KMS
+      AttributeDefinitions:
+        - AttributeName: memoryId
+          AttributeType: S
+        - AttributeName: resourceId
+          AttributeType: S
+        - AttributeName: createdAt
+          AttributeType: S
+      KeySchema:
+        - AttributeName: memoryId
+          KeyType: HASH
+      GlobalSecondaryIndexes:
+        - IndexName: by-resource-createdAt
+          KeySchema:
+            - AttributeName: resourceId
+              KeyType: HASH
+            - AttributeName: createdAt
+              KeyType: RANGE
+          Projection:
+            ProjectionType: ALL
+      TimeToLiveSpecification:
+        AttributeName: ttl
+        Enabled: true
+
   NormalizerExecutionRole:
     Type: AWS::IAM::Role
     Properties:
@@ -708,6 +755,9 @@ Resources:
                   - !Sub '${JourneyTable.Arn}/index/*'
                   - !GetAtt IncidentDigestTable.Arn
                   - !Sub '${IncidentDigestTable.Arn}/index/*'
+                  - !GetAtt AgentStepsTable.Arn
+                  - !GetAtt AgentMemoryTable.Arn
+                  - !Sub '${AgentMemoryTable.Arn}/index/*'
               - Sid: Buckets
                 Effect: Allow
                 Action:
@@ -859,6 +909,7 @@ Resources:
           INCIDENT_DIGEST_TABLE_NAME: !Ref IncidentDigestTable
           EVIDENCE_BUCKET_NAME: !Ref EvidenceBucket
           CONNECT_SRE_EVENT_BUS_NAME: !Ref ConnectSreEventBus
+          TOPOLOGY_REFRESH_QUEUE_URL: !Ref TopologyRefreshQueue
       Code:
         ZipFile: |
           import json
@@ -920,6 +971,14 @@ Resources:
               # MVP supports notify/ticket/diagnostic workflows, not direct Connect mutation.
               print(json.dumps({"message": "connect action dispatcher placeholder", "event": event}))
               return {"ok": True, "placeholder": True, "executed": False}
+
+  TopologyRefreshEventSourceMapping:
+    Type: AWS::Lambda::EventSourceMapping
+    Properties:
+      EventSourceArn: !GetAtt TopologyRefreshQueue.Arn
+      FunctionName: !GetAtt TopologyScannerFunction.Arn
+      BatchSize: 1
+      Enabled: true
 
   CloudWatchAlarmRule:
     Type: AWS::Events::Rule
@@ -1116,6 +1175,14 @@ Outputs:
     Description: Business journey mapping DynamoDB table.
     Value: !Ref JourneyTable
 
+  AgentStepsTableName:
+    Description: Per-step audit trail for agent investigations.
+    Value: !Ref AgentStepsTable
+
+  AgentMemoryTableName:
+    Description: Long-term agentic memory — prior incident patterns and resolutions.
+    Value: !Ref AgentMemoryTable
+
   EvidenceBucketName:
     Description: Evidence S3 bucket.
     Value: !Ref EvidenceBucket
@@ -1148,6 +1215,3 @@ Outputs:
     Description: Action dispatcher Lambda ARN.
     Value: !GetAtt ActionDispatcherFunction.Arn
 
-  AgentRuntimeTaskRoleArn:
-    Description: ECS/App Runner task role for ADK runtime.
-    Value: !GetAtt AgentRuntimeTaskRole.Arn

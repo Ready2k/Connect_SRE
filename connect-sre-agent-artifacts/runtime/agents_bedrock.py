@@ -38,6 +38,8 @@ from tools import (
     query_recent_mutations as _query_recent_mutations,
     query_topology as _query_topology,
     query_connect_ctrs as _query_connect_ctrs,
+    recall_prior_incidents as _recall_prior_incidents,
+    record_investigation_memory as _record_investigation_memory,
 )
 
 # Wrap with @tool so Strands can build JSON schemas for each function.
@@ -51,6 +53,8 @@ propose_remediation = _strands_tool(_propose_remediation)
 query_connect_metrics = _strands_tool(_query_connect_metrics)
 query_connect_ctrs = _strands_tool(_query_connect_ctrs)
 query_cloudwatch_flow_logs = _strands_tool(_query_cloudwatch_flow_logs)
+recall_prior_incidents = _strands_tool(_recall_prior_incidents)
+record_investigation_memory = _strands_tool(_record_investigation_memory)
 
 logger = logging.getLogger(__name__)
 
@@ -338,6 +342,8 @@ def build_strands_supervisor(model, trace_fn=None):
             query_topology,
             query_connect_ctrs,
             propose_remediation,
+            recall_prior_incidents,
+            record_investigation_memory,
         ],
     )
 

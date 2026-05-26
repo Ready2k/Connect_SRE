@@ -36,6 +36,9 @@ TOOLS_TABLE = os.environ.get("TOOLS_TABLE_NAME", "dev-connect-sre-tool-registry"
 POLICY_TABLE = os.environ.get("POLICY_TABLE_NAME", "dev-connect-sre-policy-config")
 RUNBOOKS_BUCKET = os.environ.get("RUNBOOKS_BUCKET_NAME", "dev-connect-sre-runbooks-388660028061-us-west-2")
 TRACE_TABLE_NAME = os.environ.get("AGENT_RUNS_TABLE_NAME", "dev-connect-sre-agent-runs")
+AGENT_STEPS_TABLE_NAME = os.environ.get("AGENT_STEPS_TABLE_NAME", "dev-connect-sre-agent-steps")
+
+_STEPS_TTL_DAYS = 90
 
 s3_client = boto3.client("s3", region_name=os.environ.get("AWS_REGION", os.environ.get("AWS_DEFAULT_REGION", "us-west-2")))
 lambda_client = boto3.client("lambda", region_name=os.environ.get("AWS_REGION", os.environ.get("AWS_DEFAULT_REGION", "us-west-2")))
@@ -59,6 +62,22 @@ def _add_step(incident_id: str, step: dict):
     if len(_step_store) > _STEP_STORE_MAX:
         oldest = next(iter(_step_store))
         del _step_store[oldest]
+    # Persist to DynamoDB for durability — survives container restarts
+    try:
+        from datetime import timezone
+        ttl = int((datetime.utcnow().replace(tzinfo=timezone.utc) + timedelta(days=_STEPS_TTL_DAYS)).timestamp())
+        dynamodb.Table(AGENT_STEPS_TABLE_NAME).put_item(Item={
+            "incidentId": incident_id,
+            "seq": step["seq"],
+            "ts": step.get("ts", datetime.utcnow().isoformat() + "Z"),
+            "type": step.get("type", ""),
+            "agent": step.get("agent", ""),
+            "message": step.get("message", "")[:500],
+            "detail": step.get("detail", "")[:4000],
+            "ttl": ttl,
+        })
+    except Exception as e:
+        logger.warning("Failed to persist step seq=%d incident=%s: %s", step["seq"], incident_id, e)
 
 # Lazily resolved AWS account ID (used in IAM ARN construction)
 _aws_account_id: Optional[str] = None
@@ -100,6 +119,9 @@ _instances_cache: Dict[str, Any] = {"data": None, "fetched_at": 0}
 
 def _write_trace(run_id: str, incident_id: str, started_at: str, latency_ms: int, status: str, thought_process: str):
     try:
+        steps = _step_store.get(incident_id, [])
+        tool_calls = [s["message"] for s in steps if s.get("type") == "tool_call"]
+        specialist_calls = [s["message"] for s in steps if s.get("type") == "specialist_call"]
         dynamodb.Table(TRACE_TABLE_NAME).put_item(Item={
             "runId": run_id,
             "incidentId": incident_id,
@@ -107,7 +129,9 @@ def _write_trace(run_id: str, incident_id: str, started_at: str, latency_ms: int
             "startedAt": started_at,
             "latencyMs": latency_ms,
             "modelId": _ACTIVE_MODEL_LABEL,
-            "toolCalls": [],
+            "toolCalls": tool_calls,
+            "specialistCalls": specialist_calls,
+            "stepCount": len(steps),
             "status": status,
             "thoughtProcess": thought_process,
         })

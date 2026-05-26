@@ -445,6 +445,61 @@ Resources:
           Projection:
             ProjectionType: ALL
 
+  AgentStepsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub '${EnvironmentName}-connect-sre-agent-steps'
+      BillingMode: PAY_PER_REQUEST
+      SSESpecification:
+        SSEEnabled: true
+        KMSMasterKeyId: !Ref ConnectSreKmsKey
+        SSEType: KMS
+      AttributeDefinitions:
+        - AttributeName: incidentId
+          AttributeType: S
+        - AttributeName: seq
+          AttributeType: N
+      KeySchema:
+        - AttributeName: incidentId
+          KeyType: HASH
+        - AttributeName: seq
+          KeyType: RANGE
+      TimeToLiveSpecification:
+        AttributeName: ttl
+        Enabled: true
+
+  AgentMemoryTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub '${EnvironmentName}-connect-sre-memory'
+      BillingMode: PAY_PER_REQUEST
+      SSESpecification:
+        SSEEnabled: true
+        KMSMasterKeyId: !Ref ConnectSreKmsKey
+        SSEType: KMS
+      AttributeDefinitions:
+        - AttributeName: memoryId
+          AttributeType: S
+        - AttributeName: resourceId
+          AttributeType: S
+        - AttributeName: createdAt
+          AttributeType: S
+      KeySchema:
+        - AttributeName: memoryId
+          KeyType: HASH
+      GlobalSecondaryIndexes:
+        - IndexName: by-resource-createdAt
+          KeySchema:
+            - AttributeName: resourceId
+              KeyType: HASH
+            - AttributeName: createdAt
+              KeyType: RANGE
+          Projection:
+            ProjectionType: ALL
+      TimeToLiveSpecification:
+        AttributeName: ttl
+        Enabled: true
+
   NormalizerExecutionRole:
     Type: AWS::IAM::Role
     Properties:
@@ -700,6 +755,9 @@ Resources:
                   - !Sub '${JourneyTable.Arn}/index/*'
                   - !GetAtt IncidentDigestTable.Arn
                   - !Sub '${IncidentDigestTable.Arn}/index/*'
+                  - !GetAtt AgentStepsTable.Arn
+                  - !GetAtt AgentMemoryTable.Arn
+                  - !Sub '${AgentMemoryTable.Arn}/index/*'
               - Sid: Buckets
                 Effect: Allow
                 Action:
@@ -1116,6 +1174,14 @@ Outputs:
   JourneyTableName:
     Description: Business journey mapping DynamoDB table.
     Value: !Ref JourneyTable
+
+  AgentStepsTableName:
+    Description: Per-step audit trail for agent investigations.
+    Value: !Ref AgentStepsTable
+
+  AgentMemoryTableName:
+    Description: Long-term agentic memory — prior incident patterns and resolutions.
+    Value: !Ref AgentMemoryTable
 
   EvidenceBucketName:
     Description: Evidence S3 bucket.

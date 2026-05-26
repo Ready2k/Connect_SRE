@@ -16,6 +16,8 @@ DOCKER_ARGS=(
   -v ~/.aws:/root/.aws:ro
   -e AWS_PROFILE=connect-sre-runtime
   -e AWS_REGION=us-west-2
+  -e AGENT_STEPS_TABLE_NAME=dev-connect-sre-agent-steps
+  -e MEMORY_TABLE_NAME=dev-connect-sre-memory
 )
 
 case "${PROVIDER_CHOICE:-1}" in
