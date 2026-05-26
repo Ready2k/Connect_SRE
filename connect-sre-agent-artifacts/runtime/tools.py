@@ -4,6 +4,7 @@ import logging
 import time
 import uuid
 import boto3
+from botocore.exceptions import ClientError
 from datetime import datetime, timezone, timedelta
 
 logger = logging.getLogger(__name__)
@@ -147,6 +148,31 @@ def fetch_runbook(topic: str) -> str:
         content = response["Body"].read().decode("utf-8")
         logger.info("[TOOL] fetch_runbook topic=%s bytes=%d", topic, len(content))
         return json.dumps({"status": "success", "content": content})
+    except ClientError as e:
+        if e.response["Error"]["Code"] not in ("NoSuchKey", "404"):
+            logger.error("[TOOL] fetch_runbook topic=%s error=%s", topic, e)
+            return json.dumps({"status": "error", "message": str(e)})
+        # Key not found — fall back to word-overlap search across all runbooks in the bucket
+        try:
+            listing = S3.list_objects_v2(Bucket=RUNBOOK_BUCKET_NAME)
+            keys = [obj["Key"] for obj in listing.get("Contents", []) if obj["Key"].endswith(".md")]
+            topic_words = set(topic.lower().replace("-", "_").replace(" ", "_").split("_"))
+            best_key, best_score = None, 0
+            for key in keys:
+                key_words = set(key.lower().replace("-", "_").replace(".md", "").split("_"))
+                score = len(topic_words & key_words)
+                if score > best_score:
+                    best_key, best_score = key, score
+            if best_key and best_score > 0:
+                response = S3.get_object(Bucket=RUNBOOK_BUCKET_NAME, Key=best_key)
+                content = response["Body"].read().decode("utf-8")
+                logger.info("[TOOL] fetch_runbook topic=%s fallback_key=%s score=%d bytes=%d", topic, best_key, best_score, len(content))
+                return json.dumps({"status": "success", "content": content, "matched_key": best_key})
+            logger.warning("[TOOL] fetch_runbook topic=%s no_match available_keys=%s", topic, keys[:10])
+            return json.dumps({"status": "not_found", "message": f"No runbook found for '{topic}'.", "available": keys[:20]})
+        except Exception as list_err:
+            logger.error("[TOOL] fetch_runbook topic=%s list_error=%s", topic, list_err)
+            return json.dumps({"status": "error", "message": str(list_err)})
     except Exception as e:
         logger.error("[TOOL] fetch_runbook topic=%s error=%s", topic, e)
         return json.dumps({"status": "error", "message": str(e)})
