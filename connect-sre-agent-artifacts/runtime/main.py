@@ -556,25 +556,25 @@ async def create_trace(request: Request):
     except Exception as e:
         return {"status": "error", "message": str(e)}
 
+_AGENT_CONFIG_DEFAULTS = {
+    "logGroupName": "/aws/connect/default",
+    "defaultTimeWindowMinutes": 60,
+    "ctrLocation": "s3://connect-ctr-bucket/",
+    "assumeRoleArn": "",
+}
+
+
 @app.get("/api/agents/config")
-async def get_agent_config():
+async def get_agent_config(mode: str = Query("demo")):
+    if mode == "demo":
+        return {**_AGENT_CONFIG_DEFAULTS, "iamExecutionRole": "arn:aws:iam::123456789012:role/AgentRuntimeTaskRole"}
     try:
         table = dynamodb.Table(POLICY_TABLE)
         response = table.get_item(Key={'policyId': 'AgentToolConfig'})
-        
-        default_config = {
-            "logGroupName": "/aws/connect/default",
-            "defaultTimeWindowMinutes": 60,
-            "ctrLocation": "s3://connect-ctr-bucket/",
-            "assumeRoleArn": ""
-        }
-        
         if 'Item' in response:
             stored_config = response['Item'].get('config', {})
-            # Merge with defaults to ensure all fields are present
-            return {**default_config, **stored_config, "iamExecutionRole": f"arn:aws:iam::{_get_account_id()}:role/AgentRuntimeTaskRole"}
-        else:
-            return {**default_config, "iamExecutionRole": f"arn:aws:iam::{_get_account_id()}:role/AgentRuntimeTaskRole"}
+            return {**_AGENT_CONFIG_DEFAULTS, **stored_config, "iamExecutionRole": f"arn:aws:iam::{_get_account_id()}:role/AgentRuntimeTaskRole"}
+        return {**_AGENT_CONFIG_DEFAULTS, "iamExecutionRole": f"arn:aws:iam::{_get_account_id()}:role/AgentRuntimeTaskRole"}
     except Exception as e:
         logger.error(f"Failed to fetch agent config: {e}")
         return {"error": str(e)}
@@ -853,32 +853,63 @@ async def update_policy(payload: list, mode: str = Query("demo")):
         logger.error(f"Failed to update policies: {e}")
         return {"status": "error", "message": str(e)}
 
+def _runbooks_from_disk(directory: str) -> list:
+    """Read .md files from a local directory and return runbook dicts."""
+    import glob
+    items = []
+    for path in sorted(glob.glob(os.path.join(directory, "*.md"))):
+        key = os.path.basename(path)
+        try:
+            with open(path, encoding="utf-8") as fh:
+                content = fh.read()
+        except Exception as e:
+            content = f"Error loading content: {e}"
+        items.append({
+            "id": key,
+            "title": key.replace(".md", "").replace("_", " "),
+            "category": "Connect SRE",
+            "status": "Active",
+            "lastUpdated": "2026-05-25T10:00:00Z",
+            "content": content,
+        })
+    return items
+
+
 @app.get("/api/runbooks")
 async def get_runbooks(mode: str = Query("demo")):
     if mode == "demo":
+        local_dir = os.path.join(os.path.dirname(__file__), "..", "runbooks")
+        local_dir = os.path.normpath(local_dir)
+        if os.path.isdir(local_dir):
+            return _runbooks_from_disk(local_dir)
+        # Fallback when runbooks dir isn't present (unit tests, bare checkout)
         return [
-            {"key": "Runbook_Lex_Timeout.md", "size": 1024, "lastModified": "2026-05-25T10:00:00Z"}
+            {
+                "id": "Amazon_Lex_Intent_Misrouting_and_Timeouts.md",
+                "title": "Amazon Lex Intent Misrouting and Timeouts",
+                "category": "Connect SRE",
+                "status": "Active",
+                "lastUpdated": "2026-05-25T10:00:00Z",
+                "content": "# Amazon Lex Intent Misrouting and Timeouts\n\nRunbook content not available in this environment.",
+            }
         ]
     try:
         response = s3_client.list_objects_v2(Bucket=RUNBOOKS_BUCKET)
         items = []
         if 'Contents' in response:
             for obj in response['Contents']:
-                # For demo/MVP, fetch the content of the markdown file.
-                # In prod, this should be a separate endpoint /api/runbooks/{id} to save bandwidth
                 try:
                     obj_response = s3_client.get_object(Bucket=RUNBOOKS_BUCKET, Key=obj['Key'])
                     content = obj_response['Body'].read().decode('utf-8')
                 except Exception as e:
                     content = f"Error loading content: {e}"
-
                 items.append({
                     "id": obj['Key'],
                     "title": obj['Key'].split('/')[-1].replace('.md', '').replace('_', ' ').title(),
                     "category": obj['Key'].split('/')[0] if '/' in obj['Key'] else "General",
                     "status": "Active",
                     "lastUpdated": obj['LastModified'].isoformat() + "Z",
-                    "content": content
+                    "content": content,
                 })
         return items
     except Exception as e:

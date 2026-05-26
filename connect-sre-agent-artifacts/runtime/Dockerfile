@@ -12,6 +12,7 @@ WORKDIR /app
 COPY runtime/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 COPY runtime/ .
+COPY runbooks/ /app/runbooks/
 
 # Copy built UI static files from Stage 1
 COPY --from=ui-builder /app/ui/dist /app/ui/dist

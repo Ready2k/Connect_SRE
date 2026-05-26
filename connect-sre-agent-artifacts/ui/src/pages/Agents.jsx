@@ -105,7 +105,7 @@ const Agents = () => {
   useEffect(() => {
     fetchAgentStatus();
 
-    fetch('/api/agents/config')
+    fetch(`/api/agents/config?mode=${mode}`)
       .then(res => res.json())
       .then(data => { if (!data.error) setConfig(data); })
       .catch(err => console.error("Failed to fetch agent config", err));
