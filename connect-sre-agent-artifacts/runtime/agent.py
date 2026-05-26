@@ -133,7 +133,12 @@ class _GeminiSupervisor:
 
     async def chat(self, prompt: str):
         target = self._handle if self._handle is not None else self._agent
-        return await target.chat(prompt)
+        result = await target.chat(prompt)
+        # Attach approximate token counts so main.py can log them uniformly
+        if not hasattr(result, 'approx_input_tokens'):
+            result.approx_input_tokens = max(1, len(prompt) // 4)
+            result.approx_output_tokens = 0
+        return result
 
 
 # ---------------------------------------------------------------------------
@@ -141,8 +146,10 @@ class _GeminiSupervisor:
 # ---------------------------------------------------------------------------
 
 class _BedrockResponse:
-    def __init__(self, text: str):
+    def __init__(self, text: str, approx_input_tokens: int = 0, approx_output_tokens: int = 0):
         self._text = text
+        self.approx_input_tokens = approx_input_tokens
+        self.approx_output_tokens = approx_output_tokens
 
     async def text(self) -> str:
         return self._text
@@ -168,7 +175,7 @@ class _BedrockSupervisor:
 
         region = os.environ.get("AWS_REGION", os.environ.get("AWS_DEFAULT_REGION", "us-west-2"))
         model = BedrockModel(model_id=self._model_id, region_name=region)
-        self._agent = build_strands_supervisor(model, trace_fn=self._trace_fn)
+        self._agent, self._accumulator = build_strands_supervisor(model, trace_fn=self._trace_fn)
         logger.info("Bedrock multi-agent supervisor ready: %s in %s", self._model_id, region)
         return self
 
@@ -178,4 +185,6 @@ class _BedrockSupervisor:
     async def chat(self, prompt: str) -> _BedrockResponse:
         loop = asyncio.get_event_loop()
         result = await loop.run_in_executor(None, self._agent, prompt)
-        return _BedrockResponse(str(result))
+        approx_output_tokens = getattr(self._accumulator, 'approx_output_tokens', 0)
+        approx_input_tokens = max(1, len(prompt) // 4)
+        return _BedrockResponse(str(result), approx_input_tokens, approx_output_tokens)

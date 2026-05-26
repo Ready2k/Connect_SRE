@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import { FileText, ArrowLeft, ChevronDown, ChevronRight, Activity } from 'lucide-react';
+import { FileText, ArrowLeft, ChevronDown, ChevronRight, Activity, ShieldCheck } from 'lucide-react';
 import { useSearchParams, useNavigate } from 'react-router-dom';
 import { useAppContext } from '../context/AppContext';
 
@@ -23,8 +23,10 @@ const TYPE_ICON = {
   start:            '▶',
   specialist_call:  '→',
   specialist_result:'✓',
-  tool_call:        '⚡',  // Gemini direct tool invocation
-  tool_result:      '↩',  // Gemini tool return
+  tool_call:        '⚡',
+  tool_result:      '↩',
+  llm_input:        '✉',
+  llm_output:       '◎',
   complete:         '✓✓',
   error:            '✗',
 };
@@ -35,8 +37,19 @@ const TYPE_LABEL = {
   specialist_result:'RESULT',
   tool_call:        'TOOL CALL',
   tool_result:      'TOOL RESULT',
+  llm_input:        'LLM IN',
+  llm_output:       'LLM OUT',
   complete:         'COMPLETE',
   error:            'ERROR',
+};
+
+const APPROVAL_STATUS_STYLE = {
+  Approved:  { bg: 'rgba(0,255,128,0.1)',   color: 'var(--status-ok)' },
+  Executed:  { bg: 'rgba(0,200,255,0.1)',   color: 'var(--accent-cyan)' },
+  Rejected:  { bg: 'rgba(255,80,80,0.12)',  color: 'var(--status-critical)' },
+  Blocked:   { bg: 'rgba(255,160,0,0.12)',  color: 'var(--status-warning)' },
+  'In Progress': { bg: 'rgba(255,255,255,0.08)', color: 'var(--text-secondary)' },
+  Success:   { bg: 'rgba(0,255,128,0.08)',  color: 'var(--status-ok)' },
 };
 
 function StepRow({ step }) {
@@ -215,6 +228,7 @@ function AuditTable() {
   const navigate = useNavigate();
   const [logData, setLogData] = useState([]);
   const [recentRuns, setRecentRuns] = useState([]);
+  const [approvalHistory, setApprovalHistory] = useState([]);
 
   useEffect(() => {
     fetch(`/api/logs?mode=${mode}`)
@@ -222,10 +236,14 @@ function AuditTable() {
       .then(data => setLogData(data))
       .catch(err => console.error(err));
 
-    // Load recent incident runs for quick links
     fetch(`/api/incidents?mode=${mode}`)
       .then(r => r.json())
       .then(data => setRecentRuns(data.slice(0, 8)))
+      .catch(() => {});
+
+    fetch(`/api/approvals/history?mode=${mode}`)
+      .then(r => r.json())
+      .then(data => setApprovalHistory(data))
       .catch(() => {});
   }, [mode]);
 
@@ -262,38 +280,93 @@ function AuditTable() {
       )}
 
       {/* Audit table */}
-      <div className="glass-panel" style={{ flex: 1, overflowY: 'auto', padding: 0 }}>
+      <div className="glass-panel" style={{ flex: '0 0 auto', overflowY: 'auto', padding: 0, maxHeight: '40vh' }}>
         <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: '0.85rem' }}>
           <thead>
             <tr style={{ background: 'rgba(255,255,255,0.02)', borderBottom: '1px solid var(--border-glass)', position: 'sticky', top: 0 }}>
-              <th style={{ padding: '1rem', fontWeight: 600, color: 'var(--text-secondary)' }}>Timestamp</th>
-              <th style={{ padding: '1rem', fontWeight: 600, color: 'var(--text-secondary)' }}>Source Component</th>
-              <th style={{ padding: '1rem', fontWeight: 600, color: 'var(--text-secondary)' }}>Action Type</th>
-              <th style={{ padding: '1rem', fontWeight: 600, color: 'var(--text-secondary)' }}>Details</th>
-              <th style={{ padding: '1rem', fontWeight: 600, color: 'var(--text-secondary)' }}>Status</th>
+              <th style={{ padding: '0.75rem 1rem', fontWeight: 600, color: 'var(--text-secondary)' }}>Timestamp</th>
+              <th style={{ padding: '0.75rem 1rem', fontWeight: 600, color: 'var(--text-secondary)' }}>Source</th>
+              <th style={{ padding: '0.75rem 1rem', fontWeight: 600, color: 'var(--text-secondary)' }}>Type</th>
+              <th style={{ padding: '0.75rem 1rem', fontWeight: 600, color: 'var(--text-secondary)' }}>Details</th>
+              <th style={{ padding: '0.75rem 1rem', fontWeight: 600, color: 'var(--text-secondary)' }}>Status</th>
             </tr>
           </thead>
           <tbody>
-            {logData.map((log, idx) => (
-              <tr key={idx} style={{ borderBottom: '1px solid rgba(255,255,255,0.05)' }}>
-                <td style={{ padding: '1rem', fontFamily: 'monospace', color: 'var(--text-secondary)' }}>{new Date(log.time).toLocaleTimeString()}</td>
-                <td style={{ padding: '1rem' }}>{log.source}</td>
-                <td style={{ padding: '1rem', color: 'var(--accent-cyan)' }}>{log.type}</td>
-                <td style={{ padding: '1rem', color: 'var(--text-secondary)' }}>{log.details}</td>
-                <td style={{ padding: '1rem' }}>
-                  <span style={{
-                    padding: '0.25rem 0.5rem', borderRadius: '4px', fontSize: '0.75rem',
-                    background: log.status === 'Success' || log.status === 'Approved' ? 'rgba(0, 255, 128, 0.1)' : 'rgba(255, 255, 255, 0.1)',
-                    color: log.status === 'Success' || log.status === 'Approved' ? 'var(--status-ok)' : 'var(--text-primary)',
-                  }}>
-                    {log.status}
-                  </span>
-                </td>
-              </tr>
-            ))}
+            {logData.map((log, idx) => {
+              const style = APPROVAL_STATUS_STYLE[log.status] || { bg: 'rgba(255,255,255,0.08)', color: 'var(--text-secondary)' };
+              return (
+                <tr key={idx} style={{ borderBottom: '1px solid rgba(255,255,255,0.05)' }}>
+                  <td style={{ padding: '0.75rem 1rem', fontFamily: 'monospace', color: 'var(--text-secondary)', whiteSpace: 'nowrap' }}>{new Date(log.time).toLocaleTimeString()}</td>
+                  <td style={{ padding: '0.75rem 1rem' }}>{log.source}</td>
+                  <td style={{ padding: '0.75rem 1rem', color: 'var(--accent-cyan)', whiteSpace: 'nowrap' }}>{log.type}</td>
+                  <td style={{ padding: '0.75rem 1rem', color: 'var(--text-secondary)', maxWidth: '340px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    {log.incidentId ? (
+                      <button onClick={() => navigate(`/logs?incidentId=${log.incidentId}`)}
+                        style={{ background: 'none', border: 'none', color: 'var(--accent-cyan)', cursor: 'pointer', fontFamily: 'monospace', marginRight: '0.4rem', padding: 0, fontSize: '0.82rem' }}>
+                        {log.incidentId}
+                      </button>
+                    ) : null}
+                    {log.details}
+                  </td>
+                  <td style={{ padding: '0.75rem 1rem' }}>
+                    <span style={{ padding: '0.2rem 0.5rem', borderRadius: '4px', fontSize: '0.75rem', background: style.bg, color: style.color }}>
+                      {log.status}
+                    </span>
+                  </td>
+                </tr>
+              );
+            })}
           </tbody>
         </table>
       </div>
+
+      {/* Approval history */}
+      {approvalHistory.length > 0 && (
+        <div className="glass-panel" style={{ flex: '0 0 auto', overflowY: 'auto', padding: 0, maxHeight: '35vh' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', padding: '0.75rem 1rem', borderBottom: '1px solid var(--border-glass)' }}>
+            <ShieldCheck size={16} color="var(--accent-purple)" />
+            <span style={{ fontWeight: 600, fontSize: '0.9rem' }}>Approval History</span>
+          </div>
+          <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: '0.82rem' }}>
+            <thead>
+              <tr style={{ background: 'rgba(255,255,255,0.02)', borderBottom: '1px solid var(--border-glass)' }}>
+                <th style={{ padding: '0.6rem 1rem', fontWeight: 600, color: 'var(--text-secondary)' }}>Actioned At</th>
+                <th style={{ padding: '0.6rem 1rem', fontWeight: 600, color: 'var(--text-secondary)' }}>Approval ID</th>
+                <th style={{ padding: '0.6rem 1rem', fontWeight: 600, color: 'var(--text-secondary)' }}>Action</th>
+                <th style={{ padding: '0.6rem 1rem', fontWeight: 600, color: 'var(--text-secondary)' }}>Incident</th>
+                <th style={{ padding: '0.6rem 1rem', fontWeight: 600, color: 'var(--text-secondary)' }}>Operator</th>
+                <th style={{ padding: '0.6rem 1rem', fontWeight: 600, color: 'var(--text-secondary)' }}>Status</th>
+              </tr>
+            </thead>
+            <tbody>
+              {approvalHistory.map((a, idx) => {
+                const style = APPROVAL_STATUS_STYLE[a.status] || { bg: 'rgba(255,255,255,0.08)', color: 'var(--text-secondary)' };
+                return (
+                  <tr key={idx} style={{ borderBottom: '1px solid rgba(255,255,255,0.05)' }}>
+                    <td style={{ padding: '0.6rem 1rem', fontFamily: 'monospace', color: 'var(--text-secondary)', whiteSpace: 'nowrap' }}>{a.actionedAt ? new Date(a.actionedAt).toLocaleString() : '—'}</td>
+                    <td style={{ padding: '0.6rem 1rem', fontFamily: 'monospace', fontSize: '0.78rem' }}>{a.approvalId}</td>
+                    <td style={{ padding: '0.6rem 1rem', color: 'var(--accent-cyan)' }}>{a.actionType}</td>
+                    <td style={{ padding: '0.6rem 1rem' }}>
+                      {a.incidentId ? (
+                        <button onClick={() => navigate(`/logs?incidentId=${a.incidentId}`)}
+                          style={{ background: 'none', border: 'none', color: 'var(--accent-cyan)', cursor: 'pointer', fontFamily: 'monospace', padding: 0, fontSize: '0.78rem' }}>
+                          {a.incidentId}
+                        </button>
+                      ) : '—'}
+                    </td>
+                    <td style={{ padding: '0.6rem 1rem', color: 'var(--text-secondary)' }}>{a.operatorId || '—'}</td>
+                    <td style={{ padding: '0.6rem 1rem' }}>
+                      <span style={{ padding: '0.2rem 0.5rem', borderRadius: '4px', fontSize: '0.75rem', background: style.bg, color: style.color }}>
+                        {a.status}
+                      </span>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
     </div>
   );
 }

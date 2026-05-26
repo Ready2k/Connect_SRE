@@ -141,7 +141,8 @@ _model_config: Dict[str, Any] = {
 # In-memory cache for Connect instance list (avoid hammering the API)
 _instances_cache: Dict[str, Any] = {"data": None, "fetched_at": 0}
 
-def _write_trace(run_id: str, incident_id: str, started_at: str, latency_ms: int, status: str, thought_process: str):
+def _write_trace(run_id: str, incident_id: str, started_at: str, latency_ms: int, status: str,
+                 thought_process: str, approx_input_tokens: int = 0, approx_output_tokens: int = 0):
     try:
         steps = _step_store.get(incident_id, [])
         tool_calls = [s["message"] for s in steps if s.get("type") == "tool_call"]
@@ -158,6 +159,8 @@ def _write_trace(run_id: str, incident_id: str, started_at: str, latency_ms: int
             "stepCount": len(steps),
             "status": status,
             "thoughtProcess": thought_process,
+            "approxInputTokens": approx_input_tokens,
+            "approxOutputTokens": approx_output_tokens,
         })
     except Exception as e:
         logger.error(f"Failed to write trace {run_id}: {e}")
@@ -196,10 +199,26 @@ async def investigate_incident_background(payload: IncidentPayload):
                 f"Metadata: {payload.metadata}\n\n"
                 f"Please begin your investigation immediately by spawning the appropriate subagents."
             )
+            _add_step(payload.incidentId, {
+                "ts": datetime.utcnow().isoformat() + "Z",
+                "type": "llm_input",
+                "agent": "SUPERVISOR",
+                "message": f"Prompt sent to {_ACTIVE_MODEL_LABEL} ({len(prompt)} chars)",
+                "detail": prompt[:4000],
+            })
             response = await supervisor.chat(prompt)
             final_report = await response.text()
             latency_ms = int((time.time() - start_time) * 1000)
-            inv_log.info("Investigation complete latency_ms=%d report_chars=%d", latency_ms, len(final_report))
+            approx_in = getattr(response, 'approx_input_tokens', max(1, len(prompt) // 4))
+            approx_out = getattr(response, 'approx_output_tokens', max(1, len(final_report) // 4))
+            inv_log.info("Investigation complete latency_ms=%d approx_input_tokens=%d approx_output_tokens=%d", latency_ms, approx_in, approx_out)
+            _add_step(payload.incidentId, {
+                "ts": datetime.utcnow().isoformat() + "Z",
+                "type": "llm_output",
+                "agent": "SUPERVISOR",
+                "message": f"Response received ({len(final_report)} chars, ~{approx_in}in/{approx_out}out tokens)",
+                "detail": final_report[:4000],
+            })
             _add_step(payload.incidentId, {
                 "ts": datetime.utcnow().isoformat() + "Z",
                 "type": "complete",
@@ -207,7 +226,7 @@ async def investigate_incident_background(payload: IncidentPayload):
                 "message": "Investigation complete",
                 "detail": final_report[:4000],
             })
-            _write_trace(run_id, payload.incidentId, started_at, latency_ms, "success", final_report[:2000])
+            _write_trace(run_id, payload.incidentId, started_at, latency_ms, "success", final_report[:2000], approx_in, approx_out)
     except Exception as e:
         latency_ms = int((time.time() - start_time) * 1000)
         inv_log.error("Investigation failed latency_ms=%d error=%s", latency_ms, str(e))
@@ -658,7 +677,7 @@ async def get_topology(
         return {"nodes": [], "edges": [], "source": "error"}
 
 @app.get("/api/approvals")
-async def get_approvals(mode: str = Query("demo")):
+async def get_approvals(mode: str = Query("demo"), status: str = Query("PENDING")):
     if mode == "demo":
         return [
             {
@@ -673,9 +692,33 @@ async def get_approvals(mode: str = Query("demo")):
     try:
         table = dynamodb.Table(APPROVAL_TABLE)
         response = table.scan()
-        return response.get('Items', [])
+        items = response.get('Items', [])
+        if status != "all":
+            items = [i for i in items if i.get("status") == status]
+        return items
     except Exception as e:
         logger.error(f"Failed to fetch approvals: {e}")
+        return []
+
+@app.get("/api/approvals/history")
+async def get_approval_history(mode: str = Query("demo")):
+    if mode == "demo":
+        return [
+            {"approvalId": "APP-DEMO-001", "incidentId": "INC-DEMO-002", "status": "APPROVED",
+             "actionType": "Update Lex Bot Alias", "operatorId": "alice", "createdAt": "2026-05-25T14:35:00Z", "actionedAt": "2026-05-25T14:37:12Z", "justification": "APPROVED by alice via UI"},
+            {"approvalId": "APP-DEMO-002", "incidentId": "INC-DEMO-003", "status": "REJECTED",
+             "actionType": "Toggle Emergency Routing", "operatorId": "bob", "createdAt": "2026-05-25T12:10:00Z", "actionedAt": "2026-05-25T12:11:30Z", "justification": "REJECTED by bob via UI"},
+            {"approvalId": "APP-DEMO-003", "incidentId": "INC-DEMO-001", "status": "BLOCKED",
+             "actionType": "Lambda Update", "operatorId": "system", "createdAt": "2026-05-24T22:05:00Z", "actionedAt": "2026-05-24T22:05:01Z", "justification": "Blocked by Policy: Out-of-hours Deployments"},
+        ]
+    try:
+        table = dynamodb.Table(APPROVAL_TABLE)
+        response = table.scan()
+        items = [i for i in response.get('Items', []) if i.get("status") != "PENDING"]
+        items.sort(key=lambda x: x.get("actionedAt") or x.get("createdAt", ""), reverse=True)
+        return items
+    except Exception as e:
+        logger.error(f"Failed to fetch approval history: {e}")
         return []
 
 @app.post("/api/approvals/{approval_id}/action")
@@ -846,33 +889,51 @@ async def get_system_logs(mode: str = Query("demo")):
             { "time": "2026-05-25T14:32:45Z", "source": "PolicyEngine", "type": "Evaluate", "details": "Check rollback safety", "status": "Approved" }
         ]
     """
-    Generate dynamic system logs based on traces and incident states.
+    Generate dynamic system logs from agent traces, incidents, and approval events.
     """
     logs = []
     try:
-        table = dynamodb.Table(TRACE_TABLE_NAME)
-        response = table.scan()
-        for trace in response.get('Items', []):
+        # Agent investigation traces
+        for trace in dynamodb.Table(TRACE_TABLE_NAME).scan().get('Items', []):
+            tool_summary = ", ".join(trace.get('toolCalls', [])[:3])
+            tok_summary = f" | ~{trace.get('approxInputTokens', 0)}in/{trace.get('approxOutputTokens', 0)}out tokens" if trace.get('approxInputTokens') else ""
             logs.append({
                 "time": trace.get("startedAt", ""),
-                "source": trace.get("agentName", "System"),
-                "type": "Trace",
-                "details": f"Ran tool {', '.join(trace.get('toolCalls', []))} for {trace.get('incidentId', '')}",
-                "status": trace.get("status", "Success").capitalize()
+                "source": "SupervisorAgent",
+                "type": "Investigation",
+                "incidentId": trace.get("incidentId", ""),
+                "details": f"{trace.get('incidentId', '')} | {trace.get('stepCount', 0)} steps | tools: {tool_summary or 'none'}{tok_summary}",
+                "status": trace.get("status", "Success").capitalize(),
             })
-            
-        incident_table = dynamodb.Table(INCIDENT_TABLE)
-        inc_response = incident_table.scan()
-        for inc in inc_response.get('Items', []):
+
+        # Active investigations
+        for inc in dynamodb.Table(INCIDENT_TABLE).scan().get('Items', []):
             if inc.get("status") == "Investigating":
                 logs.append({
                     "time": inc.get("updatedAt", datetime.utcnow().isoformat() + "Z"),
-                    "source": "SupervisorAgent",
-                    "type": "Investigation",
-                    "details": f"Triggered full analysis for {inc.get('incidentId', '')}",
-                    "status": "In Progress"
+                    "source": "Normalizer",
+                    "type": "Ingestion",
+                    "incidentId": inc.get("incidentId", ""),
+                    "details": f"{inc.get('incidentId', '')} — {inc.get('title', '')[:60]}",
+                    "status": "In Progress",
                 })
-                
+
+        # Approval events (all non-PENDING)
+        _status_label = {"APPROVED": "Approved", "REJECTED": "Rejected", "BLOCKED": "Blocked", "EXECUTED": "Executed"}
+        for appr in dynamodb.Table(APPROVAL_TABLE).scan().get('Items', []):
+            s = appr.get("status", "")
+            if s == "PENDING":
+                continue
+            operator = appr.get("operatorId", "system")
+            logs.append({
+                "time": appr.get("actionedAt") or appr.get("createdAt", ""),
+                "source": "ActionDispatcher",
+                "type": f"Approval:{s}",
+                "incidentId": appr.get("incidentId", ""),
+                "details": f"{appr.get('approvalId', '')} | {appr.get('actionType', '')} | operator: {operator}",
+                "status": _status_label.get(s, s),
+            })
+
         logs.sort(key=lambda x: x['time'], reverse=True)
     except Exception as e:
         logger.error(f"Failed to fetch logs: {e}")

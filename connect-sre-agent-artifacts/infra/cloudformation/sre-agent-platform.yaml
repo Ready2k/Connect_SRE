@@ -61,7 +61,20 @@ Parameters:
     Type: Number
     Default: 180
 
+  AgentContainerTag:
+    Type: String
+    Default: latest
+    Description: Docker image tag deployed to the ECS task definition.
 
+  AgentTaskCpu:
+    Type: String
+    Default: '1024'
+    AllowedValues: ['256', '512', '1024', '2048', '4096']
+
+  AgentTaskMemory:
+    Type: String
+    Default: '2048'
+    AllowedValues: ['512', '1024', '2048', '3072', '4096', '5120', '6144', '7168', '8192']
 
 
 Resources:
@@ -1134,6 +1147,171 @@ Resources:
       Principal: events.amazonaws.com
       SourceArn: !GetAtt ScheduledProactiveCheckRule.Arn
 
+  # ---------------------------------------------------------------------------
+  # ECS — ECR repository, task execution role, Fargate cluster, task definition
+  # Container stdout flows to RuntimeLogGroup via awslogs driver so every
+  # structured JSON log line is queryable in CloudWatch Logs Insights.
+  # ---------------------------------------------------------------------------
+
+  AgentECRRepository:
+    Type: AWS::ECR::Repository
+    Properties:
+      RepositoryName: !Sub '${EnvironmentName}-connect-sre-agent'
+      ImageScanningConfiguration:
+        ScanOnPush: true
+      EncryptionConfiguration:
+        EncryptionType: KMS
+        KmsKey: !GetAtt ConnectSreKmsKey.Arn
+      LifecyclePolicy:
+        LifecyclePolicyText: |
+          {
+            "rules": [
+              {
+                "rulePriority": 1,
+                "description": "Keep last 10 tagged images",
+                "selection": {
+                  "tagStatus": "tagged",
+                  "tagPrefixList": ["v"],
+                  "countType": "imageCountMoreThan",
+                  "countNumber": 10
+                },
+                "action": {"type": "expire"}
+              },
+              {
+                "rulePriority": 2,
+                "description": "Expire untagged images after 7 days",
+                "selection": {
+                  "tagStatus": "untagged",
+                  "countType": "sinceImagePushed",
+                  "countUnit": "days",
+                  "countNumber": 7
+                },
+                "action": {"type": "expire"}
+              }
+            ]
+          }
+
+  AgentTaskExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub '${EnvironmentName}-connect-sre-task-execution-role'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ecs-tasks.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy
+      Policies:
+        - PolicyName: ecr-pull-and-logs
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Sid: ECRPull
+                Effect: Allow
+                Action:
+                  - ecr:GetDownloadUrlForLayer
+                  - ecr:BatchGetImage
+                  - ecr:BatchCheckLayerAvailability
+                  - ecr:GetAuthorizationToken
+                Resource: '*'
+              - Sid: CloudWatchLogsWrite
+                Effect: Allow
+                Action:
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: !GetAtt RuntimeLogGroup.Arn
+              - Sid: KmsDecryptForECR
+                Effect: Allow
+                Action:
+                  - kms:Decrypt
+                  - kms:GenerateDataKey
+                Resource: !GetAtt ConnectSreKmsKey.Arn
+
+  AgentCluster:
+    Type: AWS::ECS::Cluster
+    Properties:
+      ClusterName: !Sub '${EnvironmentName}-connect-sre'
+      ClusterSettings:
+        - Name: containerInsights
+          Value: enabled
+      CapacityProviders:
+        - FARGATE
+        - FARGATE_SPOT
+      DefaultCapacityProviderStrategy:
+        - CapacityProvider: FARGATE
+          Weight: 1
+
+  AgentTaskDefinition:
+    Type: AWS::ECS::TaskDefinition
+    Properties:
+      Family: !Sub '${EnvironmentName}-connect-sre-agent'
+      NetworkMode: awsvpc
+      RequiresCompatibilities:
+        - FARGATE
+      Cpu: !Ref AgentTaskCpu
+      Memory: !Ref AgentTaskMemory
+      TaskRoleArn: !GetAtt AgentRuntimeTaskRole.Arn
+      ExecutionRoleArn: !GetAtt AgentTaskExecutionRole.Arn
+      ContainerDefinitions:
+        - Name: agent
+          Image: !Sub '${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/${AgentECRRepository}:${AgentContainerTag}'
+          Essential: true
+          PortMappings:
+            - ContainerPort: 8000
+              Protocol: tcp
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-group: !Ref RuntimeLogGroup
+              awslogs-region: !Ref AWS::Region
+              awslogs-stream-prefix: runtime
+          Environment:
+            - Name: MODEL_PROVIDER
+              Value: !Ref DefaultModelProvider
+            - Name: BEDROCK_MODEL_ID
+              Value: !Ref DefaultModelId
+            - Name: AWS_REGION
+              Value: !Ref AWS::Region
+            - Name: INCIDENT_TABLE_NAME
+              Value: !Ref IncidentTable
+            - Name: APPROVAL_TABLE_NAME
+              Value: !Ref ApprovalTable
+            - Name: AGENT_RUN_TABLE_NAME
+              Value: !Ref AgentRunTable
+            - Name: POLICY_TABLE_NAME
+              Value: !Ref PolicyConfigTable
+            - Name: TOOL_REGISTRY_TABLE_NAME
+              Value: !Ref ToolRegistryTable
+            - Name: MODEL_CONFIG_TABLE_NAME
+              Value: !Ref ModelConfigTable
+            - Name: TOPOLOGY_TABLE_NAME
+              Value: !Ref TopologyTable
+            - Name: JOURNEY_TABLE_NAME
+              Value: !Ref JourneyTable
+            - Name: INCIDENT_DIGEST_TABLE_NAME
+              Value: !Ref IncidentDigestTable
+            - Name: AGENT_STEPS_TABLE_NAME
+              Value: !Ref AgentStepsTable
+            - Name: MEMORY_TABLE_NAME
+              Value: !Ref AgentMemoryTable
+            - Name: EVIDENCE_BUCKET_NAME
+              Value: !Ref EvidenceBucket
+            - Name: RUNBOOK_BUCKET_NAME
+              Value: !Ref RunbookBucket
+            - Name: TOPOLOGY_SNAPSHOT_BUCKET_NAME
+              Value: !Ref TopologySnapshotBucket
+            - Name: AGENT_TRACE_BUCKET_NAME
+              Value: !Ref AgentTraceBucket
+            - Name: TOPOLOGY_REFRESH_QUEUE_URL
+              Value: !Ref TopologyRefreshQueue
+            - Name: ENABLE_CONNECT_WRITE_ACTIONS
+              Value: !Ref EnableConnectWriteActions
+            - Name: ENABLE_AUTONOMOUS_ACTIONS
+              Value: !Ref EnableAutonomousActions
+
 Outputs:
   EventBusName:
     Description: Connect SRE EventBridge bus name.
@@ -1214,4 +1392,20 @@ Outputs:
   ActionDispatcherFunctionArn:
     Description: Action dispatcher Lambda ARN.
     Value: !GetAtt ActionDispatcherFunction.Arn
+
+  AgentECRRepositoryUri:
+    Description: ECR repository URI for the Connect SRE agent container.
+    Value: !Sub '${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/${AgentECRRepository}'
+
+  AgentClusterName:
+    Description: ECS Fargate cluster for the Connect SRE agent.
+    Value: !Ref AgentCluster
+
+  AgentTaskDefinitionArn:
+    Description: ECS task definition ARN (family:revision) for the Connect SRE agent.
+    Value: !Ref AgentTaskDefinition
+
+  RuntimeLogGroupName:
+    Description: CloudWatch log group receiving all agent container stdout (structured JSON).
+    Value: !Ref RuntimeLogGroup
 

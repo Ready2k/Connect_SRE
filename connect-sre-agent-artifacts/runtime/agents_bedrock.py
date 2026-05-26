@@ -59,6 +59,30 @@ record_investigation_memory = _strands_tool(_record_investigation_memory)
 logger = logging.getLogger(__name__)
 
 
+class _SilentAccumulator:
+    """
+    Callback handler that suppresses Strands' default stdout printing and
+    accumulates the full streamed response text so callers can log it.
+    Also counts approximate tokens from character length (chars / 4).
+    """
+
+    def __init__(self) -> None:
+        self._chunks: list[str] = []
+
+    def __call__(self, **kwargs) -> None:
+        data = kwargs.get("data", "")
+        if data:
+            self._chunks.append(data)
+
+    @property
+    def text(self) -> str:
+        return "".join(self._chunks)
+
+    @property
+    def approx_output_tokens(self) -> int:
+        return max(1, len(self.text) // 4)
+
+
 def _summarize(text: str, length: int = 160) -> str:
     """Return a short plain-text headline from potentially markdown-heavy output."""
     for line in text.split('\n'):
@@ -79,9 +103,11 @@ def build_strands_supervisor(model, trace_fn=None):
                   dispatch and result for live trace streaming.
                   On the Gemini path, tool-level wrapping is done in agent.py.
     Returns:
-        A Strands Agent acting as the multi-agent supervisor.
+        (supervisor_agent, accumulator) — the supervisor Agent and the
+        _SilentAccumulator that will collect its streamed output text.
     """
     from strands import Agent, tool
+    from strands.handlers import null_callback_handler
 
     def _emit(event_type: str, agent: str, message: str, detail: str = ""):
         if trace_fn:
@@ -94,67 +120,79 @@ def build_strands_supervisor(model, trace_fn=None):
             })
 
     # ------------------------------------------------------------------
-    # 1. Specialist agent instances
+    # 1. Specialist agent instances — null_callback_handler suppresses the
+    #    default Strands stdout printer so tool/response text doesn't flood
+    #    the container log; structured logging in tools.py covers it instead.
     # ------------------------------------------------------------------
 
     flow_agent = Agent(
         model=model,
         system_prompt=FLOW_HEALTH_PROMPT,
         tools=[query_topology, query_connect_metrics, query_cloudwatch_flow_logs],
+        callback_handler=null_callback_handler,
     )
 
     module_agent = Agent(
         model=model,
         system_prompt=MODULE_DEPENDENCY_PROMPT,
         tools=[query_topology, calculate_blast_radius],
+        callback_handler=null_callback_handler,
     )
 
     queue_agent = Agent(
         model=model,
         system_prompt=QUEUE_ROUTING_PROMPT,
         tools=[query_topology, query_connect_metrics, query_connect_ctrs],
+        callback_handler=null_callback_handler,
     )
 
     lex_agent = Agent(
         model=model,
         system_prompt=LEX_BOT_PROMPT,
         tools=[query_topology, query_connect_metrics],
+        callback_handler=null_callback_handler,
     )
 
     ai_assist_agent = Agent(
         model=model,
         system_prompt=AI_ASSIST_PROMPT,
         tools=[query_topology],
+        callback_handler=null_callback_handler,
     )
 
     change_agent = Agent(
         model=model,
         system_prompt=CHANGE_CORRELATION_PROMPT,
         tools=[query_recent_mutations],
+        callback_handler=null_callback_handler,
     )
 
     impact_agent = Agent(
         model=model,
         system_prompt=CUSTOMER_IMPACT_PROMPT,
         tools=[calculate_blast_radius, query_topology],
+        callback_handler=null_callback_handler,
     )
 
     runbook_agent = Agent(
         model=model,
         system_prompt=RUNBOOK_PROMPT,
         tools=[fetch_runbook],
+        callback_handler=null_callback_handler,
     )
 
     risk_agent = Agent(
         model=model,
         system_prompt=RISK_POLICY_PROMPT,
         tools=[calculate_blast_radius, query_topology],
+        callback_handler=null_callback_handler,
     )
 
     verify_agent = Agent(
         model=model,
         system_prompt=VERIFICATION_PROMPT,
         tools=[query_connect_metrics, query_cloudwatch_flow_logs],
+        callback_handler=null_callback_handler,
     )
 
     # ------------------------------------------------------------------
@@ -322,8 +360,11 @@ def build_strands_supervisor(model, trace_fn=None):
     # ------------------------------------------------------------------
     # 3. Supervisor — sees all 10 specialist tools plus propose_remediation.
     #    Does NOT get raw DynamoDB/CloudWatch tools directly; it delegates.
+    #    _SilentAccumulator captures the full streamed response for LLM I/O
+    #    logging without printing to stdout.
     # ------------------------------------------------------------------
 
+    accumulator = _SilentAccumulator()
     supervisor = Agent(
         model=model,
         system_prompt=SUPERVISOR_STRANDS_INSTRUCTION,
@@ -345,7 +386,8 @@ def build_strands_supervisor(model, trace_fn=None):
             recall_prior_incidents,
             record_investigation_memory,
         ],
+        callback_handler=accumulator,
     )
 
     logger.info("Strands multi-agent supervisor built with 10 specialist agents")
-    return supervisor
+    return supervisor, accumulator
