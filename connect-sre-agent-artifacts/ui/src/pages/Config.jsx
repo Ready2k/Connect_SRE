@@ -11,7 +11,7 @@ const GEMINI_MODELS = [
 const BEDROCK_MODELS = [
   { value: 'us.anthropic.claude-sonnet-4-6', label: 'Claude Sonnet 4.6 — Bedrock (recommended)' },
   { value: 'us.anthropic.claude-opus-4-7',   label: 'Claude Opus 4.7 — Bedrock' },
-  { value: 'anthropic.claude-haiku-4-5',     label: 'Claude Haiku 4.5 — Bedrock (fastest)' },
+  { value: 'us.anthropic.claude-haiku-4-5-20251001-v1:0', label: 'Claude Haiku 4.5 — Bedrock (fastest)' },
 ];
 
 const ALL_MODELS = [...GEMINI_MODELS, ...BEDROCK_MODELS];

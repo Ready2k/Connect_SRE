@@ -82,6 +82,36 @@ body {
   background: var(--accent-blue);
 }
 
+/* Runbook markdown rendering */
+.runbook-content h1, .runbook-content h2, .runbook-content h3 {
+  color: var(--text-primary);
+  margin: 1.2em 0 0.4em;
+  font-weight: 600;
+}
+.runbook-content h1 { font-size: 1.3rem; border-bottom: 1px solid var(--border-glass); padding-bottom: 0.3em; }
+.runbook-content h2 { font-size: 1.1rem; color: var(--accent-cyan); }
+.runbook-content h3 { font-size: 0.95rem; color: var(--accent-blue); }
+.runbook-content p  { margin: 0.5em 0; color: var(--text-secondary); }
+.runbook-content ul, .runbook-content ol { padding-left: 1.4em; color: var(--text-secondary); }
+.runbook-content li { margin: 0.25em 0; }
+.runbook-content code {
+  background: rgba(255,255,255,0.08);
+  padding: 0.1em 0.35em;
+  border-radius: 3px;
+  font-size: 0.85em;
+  color: var(--accent-cyan);
+}
+.runbook-content pre {
+  background: rgba(0,0,0,0.3);
+  padding: 0.75em 1em;
+  border-radius: 6px;
+  overflow-x: auto;
+  font-size: 0.82em;
+  border: 1px solid var(--border-glass);
+}
+.runbook-content hr { border: none; border-top: 1px solid var(--border-glass); margin: 1em 0; }
+.runbook-content strong { color: var(--text-primary); }
+
 /* React Flow Dark Mode Overrides */
 .react-flow__pane {
   background: transparent !important;

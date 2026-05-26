@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { BookOpen, FileText } from 'lucide-react';
+import ReactMarkdown from 'react-markdown';
 import { useAppContext } from '../context/AppContext';
 
 const Runbooks = () => {
@@ -65,17 +66,11 @@ const Runbooks = () => {
           </div>
 
           {/* Content Pane */}
-          <div className="glass-panel" style={{ flex: 2, overflowY: 'auto' }}>
+          <div className="glass-panel" style={{ flex: 2, overflowY: 'auto', padding: '1.25rem' }}>
             {selected ? (
-              <pre style={{ 
-                fontFamily: 'monospace', 
-                fontSize: '0.85rem', 
-                color: 'var(--text-primary)',
-                whiteSpace: 'pre-wrap',
-                lineHeight: 1.6
-              }}>
-                {selected.content}
-              </pre>
+              <div style={{ fontSize: '0.88rem', lineHeight: 1.7, color: 'var(--text-primary)' }} className="runbook-content">
+                <ReactMarkdown>{selected.content}</ReactMarkdown>
+              </div>
             ) : (
               <div style={{ color: 'var(--text-secondary)', padding: '1rem' }}>Select a runbook to view its contents.</div>
             )}
