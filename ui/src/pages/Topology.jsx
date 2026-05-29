@@ -11,12 +11,12 @@ const SELECT_STYLE = {
   borderRadius: '4px',
 };
 
-// Maps dropdown label → node type values stored in topology data
+// Maps dropdown label → nodeType values written by topology_scanner.py
 const COMPONENT_TYPE_MAP = {
-  'Contact Flows': ['CONTACT_FLOW'],
-  'Lex Bots':      ['LEX_BOT'],
-  'Queues':        ['QUEUE'],
-  'Lambdas':       ['LAMBDA'],
+  'Contact Flows': ['flow', 'module'],
+  'Lex Bots':      ['lex'],
+  'Queues':        ['queue'],
+  'Routing Profiles': ['routing'],
 };
 
 const Topology = () => {

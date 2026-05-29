@@ -357,8 +357,10 @@ async def get_incidents(mode: str = Query("demo")):
         table = dynamodb.Table(INCIDENT_TABLE)
         items = []
         kwargs = {
-            "FilterExpression": "dedupeKey <> :hb",
-            "ExpressionAttributeValues": {":hb": "scheduled:proactive-heartbeat"},
+            # Exclude heartbeat noise and Linked (deduplicated) secondary incidents
+            "FilterExpression": "dedupeKey <> :hb AND #s <> :linked",
+            "ExpressionAttributeNames": {"#s": "status"},
+            "ExpressionAttributeValues": {":hb": "scheduled:proactive-heartbeat", ":linked": "Linked"},
         }
         while True:
             response = table.scan(**kwargs)
@@ -371,6 +373,32 @@ async def get_incidents(mode: str = Query("demo")):
         return items
     except Exception as e:
         logger.error(f"Failed to fetch incidents: {e}")
+        return []
+
+
+@app.get("/api/incidents/{incident_id}/linked")
+async def get_linked_incidents(incident_id: str, mode: str = Query("demo")):
+    """Return the Linked (deduplicated) secondary incidents for a master incident."""
+    if mode == "demo":
+        return []
+    try:
+        table = dynamodb.Table(INCIDENT_TABLE)
+        items = []
+        kwargs = {
+            "FilterExpression": "parentId = :pid",
+            "ExpressionAttributeValues": {":pid": incident_id},
+        }
+        while True:
+            response = table.scan(**kwargs)
+            items.extend(response.get("Items", []))
+            last = response.get("LastEvaluatedKey")
+            if not last:
+                break
+            kwargs["ExclusiveStartKey"] = last
+        items.sort(key=lambda x: x.get("createdAt", ""), reverse=True)
+        return items
+    except Exception as e:
+        logger.error(f"Failed to fetch linked incidents for {incident_id}: {e}")
         return []
 
 @app.post("/api/incidents/{incident_id}/trigger")
@@ -620,7 +648,7 @@ async def get_topology(
             flows_resp = connect_client.list_contact_flows(InstanceId=instanceId, MaxResults=100)
             for i, flow in enumerate(flows_resp.get("ContactFlowSummaryList", [])):
                 nodes.append({"id": flow.get("Id", f"flow-{i}"), "type": "default",
-                               "data": {"label": f"Flow: {flow.get('Name', 'Unnamed Flow')}"},
+                               "data": {"label": f"Flow: {flow.get('Name', 'Unnamed Flow')}", "nodeType": "flow"},
                                "position": {"x": 50 + (i % 5) * 200, "y": 80}})
 
             # Fetch queues — use .get() for Name to guard against missing fields
@@ -628,7 +656,7 @@ async def get_topology(
             queue_summaries = queues_resp.get("QueueSummaryList", [])
             for i, q in enumerate(queue_summaries):
                 nodes.append({"id": q.get("Id", f"queue-{i}"), "type": "default",
-                               "data": {"label": f"Queue: {q.get('Name', 'Unnamed Queue')}"},
+                               "data": {"label": f"Queue: {q.get('Name', 'Unnamed Queue')}", "nodeType": "queue"},
                                "position": {"x": 50 + (i % 5) * 200, "y": 280}})
 
             # Fetch edges from the DynamoDB topology table (written by topology_scanner Lambda).
@@ -672,7 +700,11 @@ async def get_topology(
                 nodes.append({
                     "id": item['nodeId'],
                     "type": "default",
-                    "data": {"label": item.get('label', item['nodeId'])},
+                    "data": {
+                        "label": item.get('label', item['nodeId']),
+                        "nodeType": item.get('nodeType', ''),
+                        "region": item.get('region', item.get('awsRegion', '')),
+                    },
                     "position": {"x": 50 + col * 200, "y": 80 + row * 150}
                 })
             else:
@@ -803,6 +835,42 @@ async def get_journeys(mode: str = Query("demo")):
         logger.error(f"Failed to fetch journeys: {e}")
         return []
 
+@app.post("/api/journeys")
+async def create_journey(journey: dict, mode: str = Query("demo")):
+    if mode == "demo":
+        return {"status": "success", "journeyId": journey.get("journeyId", "demo-new")}
+    try:
+        if not journey.get("journeyId"):
+            journey["journeyId"] = f"journey-{uuid.uuid4().hex[:8]}"
+        dynamodb.Table(JOURNEYS_TABLE).put_item(Item=journey)
+        return {"status": "success", "journeyId": journey["journeyId"]}
+    except Exception as e:
+        logger.error(f"Failed to create journey: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.patch("/api/journeys/{journey_id}")
+async def update_journey(journey_id: str, journey: dict, mode: str = Query("demo")):
+    if mode == "demo":
+        return {"status": "success"}
+    try:
+        journey["journeyId"] = journey_id
+        dynamodb.Table(JOURNEYS_TABLE).put_item(Item=journey)
+        return {"status": "success"}
+    except Exception as e:
+        logger.error(f"Failed to update journey {journey_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.delete("/api/journeys/{journey_id}")
+async def delete_journey(journey_id: str, mode: str = Query("demo")):
+    if mode == "demo":
+        return {"status": "success"}
+    try:
+        dynamodb.Table(JOURNEYS_TABLE).delete_item(Key={"journeyId": journey_id})
+        return {"status": "success"}
+    except Exception as e:
+        logger.error(f"Failed to delete journey {journey_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
 @app.get("/api/tools")
 async def get_tools(mode: str = Query("demo")):
     if mode == "demo":
@@ -817,6 +885,38 @@ async def get_tools(mode: str = Query("demo")):
     except Exception as e:
         logger.error(f"Failed to fetch tools: {e}")
         return []
+
+@app.patch("/api/tools/{tool_id}")
+async def update_tool(tool_id: str, payload: dict, mode: str = Query("demo")):
+    """Toggle a tool's active/inactive status or update its configuration."""
+    if mode == "demo":
+        return {"status": "success", "toolId": tool_id}
+    try:
+        table = dynamodb.Table(TOOLS_TABLE)
+        update_parts = []
+        expr_names = {}
+        expr_values = {}
+        if "status" in payload:
+            update_parts.append("#s = :s")
+            expr_names["#s"] = "status"
+            expr_values[":s"] = payload["status"]
+        if "notes" in payload:
+            update_parts.append("notes = :n")
+            expr_values[":n"] = payload["notes"]
+        if not update_parts:
+            return {"status": "no_change"}
+        kwargs = {
+            "Key": {"toolId": tool_id},
+            "UpdateExpression": "SET " + ", ".join(update_parts),
+            "ExpressionAttributeValues": expr_values,
+        }
+        if expr_names:
+            kwargs["ExpressionAttributeNames"] = expr_names
+        table.update_item(**kwargs)
+        return {"status": "success", "toolId": tool_id}
+    except Exception as e:
+        logger.error(f"Failed to update tool {tool_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/api/policy")
 async def get_policy(mode: str = Query("demo")):
@@ -839,8 +939,13 @@ async def get_policy(mode: str = Query("demo")):
         for item in items:
             if "policyName" not in item and "name" in item:
                 item["policyName"] = item["name"]
-        # Filter out internal AgentToolConfig entry
-        return [item for item in items if item.get('policyId') != 'AgentToolConfig']
+        # Filter out internal AgentToolConfig entry and any items missing a name/description
+        return [
+            item for item in items
+            if item.get('policyId') != 'AgentToolConfig'
+            and (item.get('policyName') or item.get('name'))
+            and item.get('description')
+        ]
     except Exception as e:
         logger.error(f"Failed to fetch policy: {e}")
         return []
@@ -966,17 +1071,24 @@ async def get_system_logs(mode: str = Query("demo")):
                 "status": trace.get("status", "Success").capitalize(),
             })
 
-        # Active investigations
+        # All incidents as normalizer ingestion events (not just Investigating)
+        _inc_status_label = {
+            "Investigating": "In Progress", "Resolved": "Success", "Dismissed": "Dismissed",
+            "Linked": "Deduplicated", "Failed": "Failed", "Config-Change": "Config Change",
+        }
         for inc in dynamodb.Table(INCIDENT_TABLE).scan().get('Items', []):
-            if inc.get("status") == "Investigating":
-                logs.append({
-                    "time": inc.get("updatedAt", datetime.utcnow().isoformat() + "Z"),
-                    "source": "Normalizer",
-                    "type": "Ingestion",
-                    "incidentId": inc.get("incidentId", ""),
-                    "details": f"{inc.get('incidentId', '')} — {inc.get('title', '')[:60]}",
-                    "status": "In Progress",
-                })
+            if inc.get("dedupeKey") == "scheduled:proactive-heartbeat":
+                continue
+            status = inc.get("status", "")
+            dedupe_note = f" [linked→{inc['parentId']}]" if inc.get("parentId") else ""
+            logs.append({
+                "time": inc.get("createdAt", ""),
+                "source": "Normalizer",
+                "type": "Ingestion",
+                "incidentId": inc.get("incidentId", ""),
+                "details": f"{inc.get('incidentId', '')} — {inc.get('title', '')[:60]}{dedupe_note}",
+                "status": _inc_status_label.get(status, status or "Unknown"),
+            })
 
         # Approval events (all non-PENDING)
         _status_label = {"APPROVED": "Approved", "REJECTED": "Rejected", "BLOCKED": "Blocked", "EXECUTED": "Executed"}
@@ -1071,10 +1183,24 @@ async def get_agents_status(mode: str = Query("demo")):
         return "Idle"
 
     supervisor_tasks = 0
+    specialist_task_counts: dict = {}
     try:
         supervisor_tasks = dynamodb.Table(TRACE_TABLE_NAME).scan(
             Select="COUNT"
         ).get("Count", 0)
+    except Exception:  # nosec B110
+        pass
+
+    # Count completed specialist invocations per agent from the steps table
+    try:
+        steps_resp = dynamodb.Table(AGENT_STEPS_TABLE_NAME).scan(
+            FilterExpression=boto3.dynamodb.conditions.Attr("type").eq("specialist_result"),
+            ProjectionExpression="#ag",
+            ExpressionAttributeNames={"#ag": "agent"},
+        )
+        for item in steps_resp.get("Items", []):
+            key = item.get("agent", "")
+            specialist_task_counts[key] = specialist_task_counts.get(key, 0) + 1
     except Exception:  # nosec B110
         pass
 
@@ -1097,7 +1223,7 @@ async def get_agents_status(mode: str = Query("demo")):
           "status": _specialist_status(agent_key),
           "health": "100%",
           "model": _ACTIVE_MODEL_LABEL,
-          "tasks": 0,
+          "tasks": specialist_task_counts.get(agent_key, 0),
           "purpose": purpose,
         }
         for sid, agent_key, name, purpose in _SPECIALISTS

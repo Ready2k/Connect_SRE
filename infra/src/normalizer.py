@@ -25,7 +25,8 @@ def handler(event, context):
         incidents = parse_contact_flow_log_errors(event)
         for normalized_incident in incidents:
             save_incident(normalized_incident, event)
-            trigger_agent_investigation(normalized_incident)
+            if normalized_incident.get("status") != "Linked":
+                trigger_agent_investigation(normalized_incident)
         print(json.dumps({"event": "contact_flow_log_errors_processed", "count": len(incidents)}))
         return {"ok": True, "count": len(incidents)}
 
@@ -72,8 +73,9 @@ def handler(event, context):
             if normalized_incident.get("isMutation", False):
                 trigger_topology_refresh(normalized_incident)
 
-            # 4. Trigger ADK Agent Investigation
-            trigger_agent_investigation(normalized_incident)
+            # 4. Trigger ADK Agent Investigation — skip for incidents linked to a master
+            if normalized_incident.get("status") != "Linked":
+                trigger_agent_investigation(normalized_incident)
 
             return {"ok": True, "incidentId": normalized_incident["incidentId"]}
 
@@ -343,17 +345,31 @@ def save_incident(incident, raw_event):
         now_dt = parse_date(incident["createdAt"])
         age_seconds = (now_dt - latest_created_at).total_seconds()
         if age_seconds < (DEDUPE_WINDOW_MINUTES * 60):
-            incident["parentId"] = latest["incidentId"]
-            incident["dedupeDecision"] = "merged"
+            master_id = latest["incidentId"]
+            incident["parentId"] = master_id
+            incident["status"] = "Linked"
+            incident["dedupeDecision"] = "linked"
             incident["dedupeParentAgeSeconds"] = int(age_seconds)
             print(json.dumps({
-                "event": "dedupe_merge",
+                "event": "dedupe_linked",
                 "newIncidentId": incident["incidentId"],
-                "parentIncidentId": latest["incidentId"],
+                "masterIncidentId": master_id,
                 "dedupeKey": dedupe_key,
                 "parentAgeSeconds": int(age_seconds),
                 "windowSeconds": DEDUPE_WINDOW_MINUTES * 60,
             }))
+            # Atomically bump the master's linkedCount and refresh its updatedAt
+            try:
+                table.update_item(
+                    Key={"incidentId": master_id},
+                    UpdateExpression="ADD linkedCount :one SET updatedAt = :now",
+                    ExpressionAttributeValues={
+                        ":one": 1,
+                        ":now": incident["createdAt"],
+                    },
+                )
+            except Exception as upd_err:
+                print(json.dumps({"event": "dedupe_counter_update_failed", "masterIncidentId": master_id, "error": str(upd_err)}))
         else:
             print(json.dumps({
                 "event": "dedupe_new_incident",
