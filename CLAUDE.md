@@ -42,6 +42,8 @@ npm run build    # Production build → dist/  (built into Docker image)
 npm run lint
 ```
 
+The Vite proxy target is `http://127.0.0.1:8000` — the FastAPI backend must be running (in Docker or locally) for API calls to resolve in dev mode.
+
 ### Lambda deploy & test scripts
 
 All scripts require `--profile connect-sre-dev` (already embedded). Run from repo root:
@@ -135,6 +137,8 @@ FLOW · MODULE · QUEUE · LEXA · AIA · CHANGE · IMPACT · RUNBOOK · RISK ·
 
 Each specialist is scoped to a subset of tools. Full system prompts are in `runtime/prompts.py`. Tool implementations are in `runtime/tools.py` — plain Python functions with type hints and docstrings (compatible with both ADK and Strands without modification).
 
+Adding a new specialist requires three coordinated changes: a system prompt constant in `prompts.py`, an `Agent` instance + `@tool` wrapper in `agents_bedrock.py`, and a persona entry in `SUPERVISOR_STRANDS_INSTRUCTION`.
+
 ### FastAPI backend (`runtime/main.py`)
 
 Live backend serving the UI. Key endpoints:
@@ -145,17 +149,26 @@ Live backend serving the UI. Key endpoints:
 | `GET /api/incidents`, `GET /api/incidents/{id}/traces` | Reads DynamoDB |
 | `GET /api/topology?mode=demo\|live&instanceId=` | Demo: DynamoDB scan. Live: Connect API |
 | `GET /api/monitoring/metrics?mode=demo\|live&instanceId=` | Demo: derived from incidents. Live: Connect real-time metrics |
+| `GET /api/connect/ai-agents?mode=demo\|live` | Lists Q Connect AI Agents via `qconnect.list_ai_agents`, enriched with prompt model ID |
+| `GET /api/connect/ai-agents/health?mode=demo\|live` | Bedrock invocation metrics + Lex runtime metrics for the AI agent fleet |
 | `GET /api/agents/status` | Returns active model label + mock agent swarm state |
 | `GET/PATCH /api/models/config` | In-memory model config (reflects `_ACTIVE_MODEL_LABEL` from env) |
 | `GET /api/approvals`, `POST /api/approvals/{id}/action` | Approval state machine |
 
 `_ACTIVE_MODEL_LABEL` is derived at startup from `MODEL_PROVIDER` + `BEDROCK_MODEL_ID` env vars and flows into traces, agent status responses, and the default model config.
 
+Most endpoints accept `?mode=demo|live`. Demo mode returns hardcoded mock data; live mode hits real AWS APIs. The UI toggle in the header switches this globally via `AppContext`.
+
 ### Frontend (`ui/`)
 
 Single-page React 19 app (React Router 7). Vite proxies `/api/*` → `http://127.0.0.1:8000`. Styling is vanilla CSS with CSS variables — no CSS framework. Key libraries: `reactflow` (topology), Recharts (metrics), Lucide React (icons).
 
-Notable pages: `/config` loads active model config from `/api/models/config` on mount and shows an active provider banner. `/topology` supports `?mode=live&instanceId=` to fetch real Connect data. `/monitoring` same live/demo toggle.
+Pages and their primary API dependencies:
+- `/agents` — SRE agent swarm diagram (supervisor + 10 specialists), sourced from `/api/agents/status`
+- `/ai-agents` — Connect AI Agent management: lists Q Connect orchestration agents with Bedrock/Lex health metrics
+- `/topology` — ReactFlow graph, supports `?mode=live&instanceId=` for real Connect data
+- `/monitoring` — Recharts panels, same live/demo toggle
+- `/config` — loads active model config from `/api/models/config` on mount, shows provider banner
 
 ### Lambda functions (`infra/src/`)
 
@@ -191,7 +204,7 @@ Feature flags (CloudFormation parameters, both default `false`):
 us-west-2 has no In-Region support for Claude 4 models — use geo inference IDs:
 - `us.anthropic.claude-sonnet-4-6` — recommended default
 - `us.anthropic.claude-opus-4-7` — most capable
-- `us.anthropic.claude-haiku-4-5-20251001-v1:0` — fastest/cheapest
+- `us.anthropic.claude-haiku-4-5-20251001-v1:0` — fastest/cheapest; used by Q Connect AI Agents
 
 Gemini: `gemini-3.5-flash` (GA, recommended), `gemini-2.5-pro`, `gemini-2.5-flash`
 
@@ -201,10 +214,23 @@ This IAM user provides credentials to the ECS container via `~/.aws`. Required p
 - `bedrock:InvokeModel` + `bedrock:InvokeModelWithResponseStream` — **Resource: `"*"`** (cross-region inference routes through us-east-1, not just us-west-2)
 - `connect:GetCurrentMetricData` — real-time queue/flow metrics
 - `connect:GetMetricDataV2` — historical metrics used by `query_connect_metrics` tool
+- `wisdom:ListAIAgents`, `wisdom:GetAIAgent`, `wisdom:ListAIPrompts`, `wisdom:GetAIPrompt`, `wisdom:ListAssistants` — Q Connect AI Agent management (boto3 service name is `qconnect`; IAM actions use the `wisdom:` prefix)
 - All DynamoDB table actions on the `dev-connect-sre-*` tables
 - CloudWatch Logs Insights (`logs:StartQuery`, `logs:GetQueryResults`, `logs:DescribeLogGroups`, `logs:DescribeLogStreams`)
 
 When adding Connect API calls to `tools.py`, check `GetMetricDataV2` vs `GetCurrentMetricData` — they are **separate IAM actions** requiring separate grants.
+
+### boto3 version constraint
+
+`runtime/requirements.txt` pins `boto3>=1.37.0`. The Q Connect AI Agent APIs (`list_ai_agents`, `get_ai_agent`, `get_ai_prompt`) were added in boto3 1.35.x. Do not downgrade below 1.35.0 or these calls will fail with `AttributeError: 'QConnect' object has no attribute 'list_ai_agents'`.
+
+### Q Connect AI Agents
+
+The Q Connect assistant ID for the `archdemos` Connect instance is `de018ffb-f5ea-4ff4-8547-714cb0eeb736` (set via `QCONNECT_ASSISTANT_ID` env var, with this value as the default). The boto3 client name is `qconnect`; IAM actions use the `wisdom:` prefix.
+
+There is no dedicated Q Connect CloudWatch namespace — health signals come from:
+- **AWS/Bedrock** — `Invocations`, `InvocationClientErrors`, `InvocationLatency` dimensioned by `ModelId`
+- **AWS/Lex** — `RuntimeRequestCount`, `RuntimeUserErrors` for the Connect bot that hosts agent conversations
 
 ### Topology scanner must be run before the agent can be useful
 
