@@ -41,6 +41,7 @@ from tools import (
     query_contact_lens as _query_contact_lens,
     query_agent_events as _query_agent_events,
     query_lex_bot_health as _query_lex_bot_health,
+    query_ai_agent_health as _query_ai_agent_health,
     recall_prior_incidents as _recall_prior_incidents,
     record_investigation_memory as _record_investigation_memory,
 )
@@ -59,6 +60,7 @@ query_contact_lens = _strands_tool(_query_contact_lens)
 query_agent_events = _strands_tool(_query_agent_events)
 query_cloudwatch_flow_logs = _strands_tool(_query_cloudwatch_flow_logs)
 query_lex_bot_health = _strands_tool(_query_lex_bot_health)
+query_ai_agent_health = _strands_tool(_query_ai_agent_health)
 recall_prior_incidents = _strands_tool(_recall_prior_incidents)
 record_investigation_memory = _strands_tool(_record_investigation_memory)
 
@@ -163,7 +165,7 @@ def build_strands_supervisor(model, trace_fn=None):
     ai_assist_agent = Agent(
         model=model,
         system_prompt=AI_ASSIST_PROMPT,
-        tools=[query_topology],
+        tools=[query_topology, query_ai_agent_health],
         callback_handler=null_callback_handler,
     )
 

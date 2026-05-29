@@ -711,6 +711,136 @@ def recall_prior_incidents(resource_id: str, incident_type: str = "") -> str:
         return json.dumps({"status": "error", "message": str(e)})
 
 
+def query_ai_agent_health(agent_id: str, assistant_id: str = "", start_minutes_ago: int = 60) -> str:
+    """
+    Inspect a Connect AI Agent (Q Connect orchestration agent) and report its health.
+    Pulls config from the qconnect API, Bedrock invocation metrics for the agent's
+    model, and Lex runtime metrics for the associated Connect bot.
+
+    Args:
+        agent_id (str): The qconnect AI agent ID (UUID).
+        assistant_id (str): The Q Connect assistant ID. Defaults to the env var
+                            QCONNECT_ASSISTANT_ID or the well-known archdemos value.
+        start_minutes_ago (int): CloudWatch lookback window in minutes (default 60).
+    """
+    import datetime
+
+    t0 = time.time()
+    logger.info("[TOOL] query_ai_agent_health agent_id=%s", agent_id)
+
+    _assistant_id = assistant_id or os.environ.get(
+        "QCONNECT_ASSISTANT_ID", "de018ffb-f5ea-4ff4-8547-714cb0eeb736"
+    )
+    region = _REGION
+    qc = boto3.client("qconnect", region_name=region)
+    cw = boto3.client("cloudwatch", region_name=region)
+
+    result: dict = {"agentId": agent_id, "assistantId": _assistant_id}
+
+    # 1. Agent config from qconnect
+    try:
+        r = qc.get_ai_agent(assistantId=_assistant_id, aiAgentId=agent_id)
+        ag = r.get("aiAgent", {})
+        result["name"] = ag.get("name", agent_id)
+        result["status"] = ag.get("status", "UNKNOWN")
+        result["visibilityStatus"] = ag.get("visibilityStatus", "UNKNOWN")
+        result["type"] = ag.get("type", "UNKNOWN")
+        result["modifiedTime"] = str(ag.get("modifiedTime", ""))
+        cfg = ag.get("configuration", {}).get("orchestrationAIAgentConfiguration", {})
+        result["promptId"] = cfg.get("orchestrationAIPromptId", "")
+        result["locale"] = cfg.get("locale", "")
+        result["tools"] = [t.get("toolName") for t in cfg.get("toolConfigurations", [])]
+        result["connectInstanceArn"] = cfg.get("connectInstanceArn", "")
+    except Exception as e:
+        result["configError"] = str(e)
+        result["status"] = "UNKNOWN"
+
+    # 2. Prompt / model details
+    model_id = None
+    if result.get("promptId"):
+        try:
+            prompt_id_bare = result["promptId"].split(":")[0]
+            pr = qc.get_ai_prompt(assistantId=_assistant_id, aiPromptId=prompt_id_bare)
+            prompt = pr.get("aiPrompt", {})
+            model_id = prompt.get("modelId")
+            result["modelId"] = model_id
+            result["promptStatus"] = prompt.get("status", "UNKNOWN")
+        except Exception as e:
+            result["promptError"] = str(e)
+
+    # 3. Bedrock invocation metrics for the agent's model
+    now = datetime.datetime.utcnow()
+    start = now - datetime.timedelta(minutes=start_minutes_ago)
+    period = int(start_minutes_ago * 60)
+
+    bedrock_metrics: dict = {}
+    if model_id:
+        dims = [{"Name": "ModelId", "Value": model_id}]
+        for metric in ("Invocations", "InvocationClientErrors", "InvocationLatency"):
+            stat = "Average" if metric == "InvocationLatency" else "Sum"
+            try:
+                resp = cw.get_metric_statistics(
+                    Namespace="AWS/Bedrock",
+                    MetricName=metric,
+                    Dimensions=dims,
+                    StartTime=start,
+                    EndTime=now,
+                    Period=period,
+                    Statistics=[stat],
+                )
+                dps = resp.get("Datapoints", [])
+                bedrock_metrics[metric] = round(dps[0][stat], 2) if dps else 0
+            except Exception as e:
+                bedrock_metrics[metric] = f"error: {e}"
+
+        # Derived error rate
+        invocations = bedrock_metrics.get("Invocations", 0)
+        errors = bedrock_metrics.get("InvocationClientErrors", 0)
+        if isinstance(invocations, (int, float)) and isinstance(errors, (int, float)) and invocations > 0:
+            bedrock_metrics["errorRatePct"] = round(100 * errors / invocations, 1)
+        else:
+            bedrock_metrics["errorRatePct"] = 0
+
+    result["bedrockMetrics"] = bedrock_metrics
+
+    # 4. Lex runtime metrics (the Connect bot that hosts Q Connect AI agents)
+    lex_metrics: dict = {}
+    try:
+        lex_resp = cw.list_metrics(Namespace="AWS/Lex", MetricName="RuntimeRequestCount")
+        lex_dims_set: list = []
+        for m in lex_resp.get("Metrics", []):
+            dim_map = {d["Name"]: d["Value"] for d in m.get("Dimensions", [])}
+            if "BotId" in dim_map and "BotAliasId" in dim_map:
+                lex_dims_set.append(m.get("Dimensions", []))
+        # Use first available bot alias dims if any
+        if lex_dims_set:
+            for metric in ("RuntimeRequestCount", "RuntimeUserErrors"):
+                try:
+                    resp = cw.get_metric_statistics(
+                        Namespace="AWS/Lex",
+                        MetricName=metric,
+                        Dimensions=lex_dims_set[0],
+                        StartTime=start,
+                        EndTime=now,
+                        Period=period,
+                        Statistics=["Sum"],
+                    )
+                    dps = resp.get("Datapoints", [])
+                    lex_metrics[metric] = int(dps[0]["Sum"]) if dps else 0
+                except Exception as e:
+                    lex_metrics[metric] = f"error: {e}"
+    except Exception as e:
+        lex_metrics["lexError"] = str(e)
+
+    result["lexMetrics"] = lex_metrics
+
+    logger.info(
+        "[TOOL] query_ai_agent_health agent_id=%s status=%s model=%s latency_ms=%d",
+        agent_id, result.get("status"), model_id, int((time.time() - t0) * 1000),
+    )
+    return json.dumps(result, default=str)
+
+
 def record_investigation_memory(
     resource_id: str,
     incident_type: str,

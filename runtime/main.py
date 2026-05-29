@@ -1245,6 +1245,190 @@ async def get_agents_status(mode: str = Query("demo")):
       ]
     }
 
+_QCONNECT_ASSISTANT_ID = os.environ.get("QCONNECT_ASSISTANT_ID", "de018ffb-f5ea-4ff4-8547-714cb0eeb736")
+_DEMO_AI_AGENTS = [
+    {
+        "aiAgentId": "8e6ff0ea-63f5-42e7-b0a6-e602eda61de8",
+        "name": "CustomerIntentRouter",
+        "type": "ORCHESTRATION",
+        "status": "ACTIVE",
+        "visibilityStatus": "PUBLISHED",
+        "locale": "en_US",
+        "modelId": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+        "promptStatus": "ACTIVE",
+        "tools": ["Complete", "Escalate", "Retrieve"],
+        "modifiedTime": "2026-05-28T18:08:16+00:00",
+        "tags": {"project": "connect-demo", "environment": "dev"},
+    },
+    {
+        "aiAgentId": "47478eeb-2cd8-4462-b1e4-60ecfbf68217",
+        "name": "LostCard",
+        "type": "ORCHESTRATION",
+        "status": "ACTIVE",
+        "visibilityStatus": "PUBLISHED",
+        "locale": "en_US",
+        "modelId": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+        "promptStatus": "ACTIVE",
+        "tools": [],
+        "modifiedTime": "2026-05-28T22:47:38+00:00",
+        "tags": {"project": "connect-demo", "environment": "dev"},
+    },
+    {
+        "aiAgentId": "64655399-7bde-4f27-8fba-1a9c93a73a93",
+        "name": "New Test Agent",
+        "type": "ORCHESTRATION",
+        "status": "ACTIVE",
+        "visibilityStatus": "PUBLISHED",
+        "locale": "en_GB",
+        "modelId": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+        "promptStatus": "ACTIVE",
+        "tools": [],
+        "modifiedTime": "2026-05-29T10:32:41+00:00",
+        "tags": {"project": "connect-demo", "environment": "dev"},
+    },
+    {
+        "aiAgentId": "958bd176-e23b-42b2-bf09-53506f88df7a",
+        "name": "Whats_The_Weather",
+        "type": "ORCHESTRATION",
+        "status": "ACTIVE",
+        "visibilityStatus": "PUBLISHED",
+        "locale": "en_US",
+        "modelId": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+        "promptStatus": "ACTIVE",
+        "tools": ["NewTool_1"],
+        "modifiedTime": "2026-05-29T18:11:55+00:00",
+        "tags": {"project": "connect-demo", "environment": "dev"},
+    },
+]
+
+
+@app.get("/api/connect/ai-agents")
+async def list_connect_ai_agents(mode: str = Query("demo"), assistantId: Optional[str] = Query(None)):
+    """
+    List all Q Connect AI Agents for the configured assistant.
+    In live mode, calls qconnect.list_ai_agents and enriches each entry with
+    the prompt model ID from qconnect.get_ai_prompt.
+    """
+    if mode != "live":
+        return {"agents": _DEMO_AI_AGENTS, "assistantId": _QCONNECT_ASSISTANT_ID, "source": "demo"}
+
+    _aid = assistantId or _QCONNECT_ASSISTANT_ID
+    region = os.environ.get("AWS_REGION", "us-west-2")
+    try:
+        qc = boto3.client("qconnect", region_name=region)
+        resp = qc.list_ai_agents(assistantId=_aid)
+        raw_agents = resp.get("aiAgentSummaries", [])
+
+        agents = []
+        for ag in raw_agents:
+            cfg = ag.get("configuration", {}).get("orchestrationAIAgentConfiguration", {})
+            prompt_id_versioned = cfg.get("orchestrationAIPromptId", "")
+            prompt_id_bare = prompt_id_versioned.split(":")[0] if prompt_id_versioned else ""
+
+            model_id = None
+            prompt_status = None
+            if prompt_id_bare:
+                try:
+                    pr = qc.get_ai_prompt(assistantId=_aid, aiPromptId=prompt_id_bare)
+                    p = pr.get("aiPrompt", {})
+                    model_id = p.get("modelId")
+                    prompt_status = p.get("status")
+                except Exception:
+                    pass
+
+            agents.append({
+                "aiAgentId": ag.get("aiAgentId"),
+                "name": ag.get("name"),
+                "type": ag.get("type"),
+                "status": ag.get("status"),
+                "visibilityStatus": ag.get("visibilityStatus"),
+                "locale": cfg.get("locale"),
+                "modelId": model_id,
+                "promptStatus": prompt_status,
+                "tools": [t.get("toolName") for t in cfg.get("toolConfigurations", [])],
+                "modifiedTime": str(ag.get("modifiedTime", "")),
+                "tags": ag.get("tags", {}),
+            })
+
+        return {"agents": agents, "assistantId": _aid, "source": "live"}
+    except Exception as e:
+        logger.error(f"Failed to list Connect AI agents: {e}")
+        raise HTTPException(status_code=503, detail=str(e))
+
+
+@app.get("/api/connect/ai-agents/health")
+async def get_ai_agents_health(mode: str = Query("demo"), assistantId: Optional[str] = Query(None)):
+    """
+    Return CloudWatch health metrics (Bedrock + Lex) for the Q Connect AI agent fleet.
+    Bedrock metrics are per model ID; Lex metrics cover the shared Connect bot.
+    Both are fetched for the past 60 minutes.
+    """
+    if mode != "live":
+        return {
+            "bedrockMetrics": {
+                "modelId": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+                "Invocations": 142,
+                "InvocationClientErrors": 3,
+                "InvocationLatency": 820.5,
+                "errorRatePct": 2.1,
+            },
+            "lexMetrics": {
+                "RuntimeRequestCount": 98,
+                "RuntimeUserErrors": 1,
+            },
+            "source": "demo",
+        }
+
+    region = os.environ.get("AWS_REGION", "us-west-2")
+    model_id = "us.anthropic.claude-haiku-4-5-20251001-v1:0"
+    cw = boto3.client("cloudwatch", region_name=region)
+
+    import datetime
+    now = datetime.datetime.utcnow()
+    start = now - datetime.timedelta(minutes=60)
+    period = 3600
+
+    bedrock: dict = {"modelId": model_id}
+    dims = [{"Name": "ModelId", "Value": model_id}]
+    for metric, stat in [("Invocations", "Sum"), ("InvocationClientErrors", "Sum"), ("InvocationLatency", "Average")]:
+        try:
+            resp = cw.get_metric_statistics(
+                Namespace="AWS/Bedrock", MetricName=metric, Dimensions=dims,
+                StartTime=start, EndTime=now, Period=period, Statistics=[stat],
+            )
+            dps = resp.get("Datapoints", [])
+            bedrock[metric] = round(dps[0][stat], 2) if dps else 0
+        except Exception:
+            bedrock[metric] = 0
+    inv = bedrock.get("Invocations", 0)
+    err = bedrock.get("InvocationClientErrors", 0)
+    bedrock["errorRatePct"] = round(100 * err / inv, 1) if inv else 0
+
+    lex: dict = {}
+    try:
+        lex_list = cw.list_metrics(Namespace="AWS/Lex", MetricName="RuntimeRequestCount")
+        lex_dims = next(
+            (m.get("Dimensions") for m in lex_list.get("Metrics", [])
+             if any(d["Name"] == "BotId" for d in m.get("Dimensions", []))),
+            None,
+        )
+        if lex_dims:
+            for metric in ("RuntimeRequestCount", "RuntimeUserErrors"):
+                try:
+                    resp = cw.get_metric_statistics(
+                        Namespace="AWS/Lex", MetricName=metric, Dimensions=lex_dims,
+                        StartTime=start, EndTime=now, Period=period, Statistics=["Sum"],
+                    )
+                    dps = resp.get("Datapoints", [])
+                    lex[metric] = int(dps[0]["Sum"]) if dps else 0
+                except Exception:
+                    lex[metric] = 0
+    except Exception as e:
+        lex["error"] = str(e)
+
+    return {"bedrockMetrics": bedrock, "lexMetrics": lex, "source": "live"}
+
+
 @app.post("/api/topology/scan")
 async def trigger_topology_scan(mode: str = Query("demo")):
     """Enqueue a full topology discovery by sending a message to the TopologyRefreshQueue."""

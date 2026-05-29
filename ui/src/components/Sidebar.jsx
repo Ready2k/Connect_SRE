@@ -1,12 +1,13 @@
 import { NavLink } from 'react-router-dom';
 import { useAppContext } from '../context/AppContext';
-import { 
-  Home, 
-  AlertTriangle, 
+import {
+  Home,
+  AlertTriangle,
   Bot,
-  Activity, 
-  Network, 
-  CheckCircle, 
+  BrainCircuit,
+  Activity,
+  Network,
+  CheckCircle,
   Settings,
   FileText,
   Route,
@@ -23,6 +24,7 @@ const Sidebar = () => {
     { icon: <Home size={20} />, label: 'Home', path: '/' },
     { icon: <AlertTriangle size={20} />, label: 'Incidents', path: '/incidents' },
     { icon: <Bot size={20} />, label: 'Agents', path: '/agents' },
+    { icon: <BrainCircuit size={20} />, label: 'AI Agents', path: '/ai-agents' },
     { icon: <CheckCircle size={20} />, label: 'Approvals', path: '/approvals' },
     { icon: <Activity size={20} />, label: 'Monitoring', path: '/monitoring' },
     { icon: <Network size={20} />, label: 'Topology', path: '/topology' },

@@ -15,6 +15,7 @@ import Journeys from './pages/Journeys';
 import ToolRegistry from './pages/ToolRegistry';
 import Policy from './pages/Policy';
 import Runbooks from './pages/Runbooks';
+import AIAgents from './pages/AIAgents';
 import InstanceOverview from './pages/InstanceOverview';
 
 // Inner component so it can consume context for conditional redirects
@@ -32,6 +33,7 @@ const AppRoutes = () => {
       <Route path="/instances" element={<InstanceOverview />} />
       <Route path="/incidents" element={<Incidents />} />
       <Route path="/agents" element={<Agents />} />
+      <Route path="/ai-agents" element={<AIAgents />} />
       <Route path="/monitoring" element={<Monitoring />} />
       <Route path="/topology" element={<Topology />} />
       <Route path="/approvals" element={<Approvals />} />
