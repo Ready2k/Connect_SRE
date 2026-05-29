@@ -25,9 +25,13 @@ The runtime is then available at `http://localhost:8000`.
 
 ## Documentation
 
-* [Architecture Overview](docs/architecture.md) - Learn how EventBridge, the Control Plane, and the multi-agent runtime interact.
-* [Agents and Dynamic Personas](docs/agents.md) - Learn how the Supervisor orchestrates the 10 specialist personas to parallelize investigations.
-* [Enterprise Ready Blueprint](ENTERPRISE_READY.md) - Guide for deploying this safely into a corporate Landing Zone.
+* [Architecture Overview](docs/architecture.md) — C4 architecture: context, containers, components, and key code flows with sequence diagrams.
+* [Agents and Orchestration](docs/agents.md) — Supervisor + 10 specialist agents, both provider paths, and the full tool library.
+* [Connect Topology Graph](docs/connect-topology.md) — DynamoDB graph schema, node types, edge types, and how to query/debug the graph.
+* [Policy Model](docs/policy-model.md) — Agent-time and dispatch-time policy gates, seeded policies, and how to add new ones.
+* [Runbook Authoring](docs/runbook-authoring.md) — How to write, name, and deploy runbooks for the RUNBOOK specialist agent.
+* [UI Specification](docs/UI_SPEC.md) — All pages, API dependencies, and design system reference.
+* [Enterprise Ready Blueprint](ENTERPRISE_READY.md) — Landing Zone deployment, IAM hardening, secrets management, and progressive feature enablement.
 
 ## Directory Structure
 
