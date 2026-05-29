@@ -1,18 +1,31 @@
-import { createContext, useContext, useState, useCallback } from 'react';
+import { createContext, useContext, useState, useCallback, useEffect } from 'react';
 
 const AppContext = createContext(null);
 
 export const AppProvider = ({ children }) => {
   const [mode, setMode] = useState('demo'); // 'demo' | 'live'
   const [activeInstance, setActiveInstance] = useState(null); // null = aggregated overview
+  const [modeLocked, setModeLocked] = useState(false); // true when server started in demo-only mode
+
+  useEffect(() => {
+    fetch('/api/config')
+      .then(r => r.json())
+      .then(cfg => {
+        if (cfg.appMode === 'demo') {
+          setMode('demo');
+          setModeLocked(true);
+        }
+      })
+      .catch(() => {}); // silently ignore — defaults remain
+  }, []);
 
   const toggleMode = useCallback((newMode) => {
+    if (modeLocked) return;
     setMode(newMode);
-    // When switching back to demo, clear the active instance
     if (newMode === 'demo') {
       setActiveInstance(null);
     }
-  }, []);
+  }, [modeLocked]);
 
   const selectInstance = useCallback((instance) => {
     setActiveInstance(instance);
@@ -23,7 +36,7 @@ export const AppProvider = ({ children }) => {
   }, []);
 
   return (
-    <AppContext.Provider value={{ mode, activeInstance, toggleMode, selectInstance, clearInstance }}>
+    <AppContext.Provider value={{ mode, activeInstance, modeLocked, toggleMode, selectInstance, clearInstance }}>
       {children}
     </AppContext.Provider>
   );

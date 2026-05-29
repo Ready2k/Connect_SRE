@@ -20,9 +20,94 @@ def get_supervisor_agent(model_id: str = None, trace_fn=None):
         trace_fn: Optional callable(step: dict) for live trace streaming.
                   Supported on both Bedrock (specialist-level) and Gemini (tool-level).
     """
+    if MODEL_PROVIDER == "demo":
+        return _DemoSupervisor(trace_fn=trace_fn)
     if MODEL_PROVIDER == "bedrock":
         return _BedrockSupervisor(model_id=model_id, trace_fn=trace_fn)
     return _GeminiSupervisor(trace_fn=trace_fn)
+
+
+# ---------------------------------------------------------------------------
+# Demo supervisor — fully mocked, no external calls
+# ---------------------------------------------------------------------------
+
+class _DemoResponse:
+    approx_input_tokens = 50
+    approx_output_tokens = 220
+
+    def __init__(self, text: str):
+        self._text = text
+
+    async def text(self) -> str:
+        return self._text
+
+
+class _DemoSupervisor:
+    def __init__(self, trace_fn=None):
+        self._trace_fn = trace_fn
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *_):
+        pass
+
+    async def chat(self, prompt: str) -> _DemoResponse:
+        trace = self._trace_fn or (lambda _: None)
+
+        def _now():
+            return datetime.now(timezone.utc).isoformat()
+
+        steps = [
+            {"ts": _now(), "type": "specialist_call", "agent": "SUPERVISOR",
+             "message": "→ FLOW agent: analysing contact flow health",
+             "detail": "Checking error rates on primary IVR flow"},
+            {"ts": _now(), "type": "tool_call", "agent": "FLOW",
+             "message": "get_flow_health(contactFlowId='default-ivr')",
+             "detail": "Querying flow error rate over the last 30 minutes"},
+            {"ts": _now(), "type": "tool_result", "agent": "FLOW",
+             "message": "Flow DEGRADED — 14.2% error rate (threshold 5%)",
+             "detail": "contactFlowId=default-ivr status=DEGRADED errorRate=14.2 window=30m"},
+            {"ts": _now(), "type": "specialist_call", "agent": "SUPERVISOR",
+             "message": "→ IMPACT agent: calculating blast radius",
+             "detail": "Traversing topology graph from default-ivr"},
+            {"ts": _now(), "type": "tool_call", "agent": "IMPACT",
+             "message": "calculate_blast_radius(nodeId='default-ivr', depth=3)",
+             "detail": "BFS traversal of DEPENDS_ON edges"},
+            {"ts": _now(), "type": "tool_result", "agent": "IMPACT",
+             "message": "Blast radius: 3 queues, 2 routing profiles (~840 contacts/hr)",
+             "detail": "queues=[Sales, Support, Billing] routingProfiles=[Standard, Priority]"},
+            {"ts": _now(), "type": "specialist_call", "agent": "SUPERVISOR",
+             "message": "→ RUNBOOK agent: searching remediation procedures",
+             "detail": "Query: contact flow error rate degraded Lex"},
+            {"ts": _now(), "type": "tool_call", "agent": "RUNBOOK",
+             "message": "search_runbooks(query='contact flow error rate degraded')",
+             "detail": "Vector search across runbook library"},
+            {"ts": _now(), "type": "tool_result", "agent": "RUNBOOK",
+             "message": "Runbook found: RB-CF-RECOVERY-001 (score 0.94)",
+             "detail": "RB-CF-RECOVERY-001 — Contact Flow Recovery: bypass failing module, reroute to queue"},
+        ]
+
+        for step in steps:
+            await asyncio.sleep(0.35)
+            trace(step)
+
+        report = (
+            "## Investigation Summary\n\n"
+            "**Root Cause:** Contact flow `default-ivr` is returning errors at 14.2% — nearly 3× "
+            "the alerting threshold of 5%. A Lex V2 bot invoked by the routing module returned "
+            "HTTP 503 responses starting at 14:22 UTC, causing the flow to fall to its error branch.\n\n"
+            "**Blast Radius:**\n"
+            "- 3 queues affected: Sales, Support, Billing\n"
+            "- 2 routing profiles impacted: Standard, Priority\n"
+            "- Estimated ~840 contacts/hr at risk of incorrect routing\n\n"
+            "**Recommended Remediation:** Invoke runbook RB-CF-RECOVERY-001.\n"
+            "1. Temporarily bypass the failing Lex module and route contacts directly to the agent queue.\n"
+            "2. Investigate Lex bot service health in us-west-2.\n"
+            "3. Redeploy or roll back the bot alias once service is confirmed healthy.\n\n"
+            "*This is a demo investigation — no real AWS resources were queried.*"
+        )
+        return _DemoResponse(report)
 
 
 # ---------------------------------------------------------------------------

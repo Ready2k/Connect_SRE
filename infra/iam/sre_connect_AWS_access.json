@@ -1,0 +1,169 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "DynamoDBTablesAccess",
+      "Effect": "Allow",
+      "Action": [
+        "dynamodb:GetItem",
+        "dynamodb:PutItem",
+        "dynamodb:UpdateItem",
+        "dynamodb:DeleteItem",
+        "dynamodb:Query",
+        "dynamodb:Scan",
+        "dynamodb:BatchWriteItem",
+        "dynamodb:BatchGetItem"
+      ],
+      "Resource": [
+        "arn:aws:dynamodb:us-west-2:388660028061:table/dev-connect-sre-topology",
+        "arn:aws:dynamodb:us-west-2:388660028061:table/dev-connect-sre-topology/index/*",
+        "arn:aws:dynamodb:us-west-2:388660028061:table/dev-connect-sre-journey-map",
+        "arn:aws:dynamodb:us-west-2:388660028061:table/dev-connect-sre-journey-map/index/*",
+        "arn:aws:dynamodb:us-west-2:388660028061:table/dev-connect-sre-incidents",
+        "arn:aws:dynamodb:us-west-2:388660028061:table/dev-connect-sre-incidents/index/*",
+        "arn:aws:dynamodb:us-west-2:388660028061:table/dev-connect-sre-approvals",
+        "arn:aws:dynamodb:us-west-2:388660028061:table/dev-connect-sre-approvals/index/*",
+        "arn:aws:dynamodb:us-west-2:388660028061:table/dev-connect-sre-agent-runs",
+        "arn:aws:dynamodb:us-west-2:388660028061:table/dev-connect-sre-agent-runs/index/*",
+        "arn:aws:dynamodb:us-west-2:388660028061:table/dev-connect-sre-policy-config",
+        "arn:aws:dynamodb:us-west-2:388660028061:table/dev-connect-sre-policy-config/index/*",
+        "arn:aws:dynamodb:us-west-2:388660028061:table/dev-connect-sre-tool-registry",
+        "arn:aws:dynamodb:us-west-2:388660028061:table/dev-connect-sre-tool-registry/index/*",
+        "arn:aws:dynamodb:us-west-2:388660028061:table/dev-connect-sre-model-config",
+        "arn:aws:dynamodb:us-west-2:388660028061:table/dev-connect-sre-model-config/index/*",
+        "arn:aws:dynamodb:us-west-2:388660028061:table/dev-connect-sre-incident-digests",
+        "arn:aws:dynamodb:us-west-2:388660028061:table/dev-connect-sre-incident-digests/index/*",
+        "arn:aws:dynamodb:us-west-2:388660028061:table/dev-connect-sre-memory",
+        "arn:aws:dynamodb:us-west-2:388660028061:table/dev-connect-sre-memory/index/*",
+        "arn:aws:dynamodb:us-west-2:388660028061:table/dev-connect-sre-agent-steps",
+        "arn:aws:dynamodb:us-west-2:388660028061:table/dev-connect-sre-agent-steps/index/*"
+      ]
+    },
+    {
+      "Sid": "BedrockInvoke",
+      "Effect": "Allow",
+      "Action": [
+        "bedrock:InvokeModel",
+        "bedrock:InvokeModelWithResponseStream"
+      ],
+      "Resource": ["*"]
+    },
+    {
+      "Sid": "S3BucketsListAccess",
+      "Effect": "Allow",
+      "Action": [
+        "s3:ListBucket",
+        "s3:GetBucketLocation"
+      ],
+      "Resource": [
+        "arn:aws:s3:::dev-connect-sre-runbooks-388660028061-us-west-2",
+        "arn:aws:s3:::dev-connect-sre-evidence-388660028061-us-west-2",
+        "arn:aws:s3:::dev-connect-sre-agent-traces-388660028061-us-west-2",
+        "arn:aws:s3:::dev-connect-sre-topology-388660028061-us-west-2"
+      ]
+    },
+    {
+      "Sid": "S3ObjectsAccess",
+      "Effect": "Allow",
+      "Action": [
+        "s3:GetObject",
+        "s3:PutObject",
+        "s3:DeleteObject"
+      ],
+      "Resource": [
+        "arn:aws:s3:::dev-connect-sre-runbooks-388660028061-us-west-2/*",
+        "arn:aws:s3:::dev-connect-sre-evidence-388660028061-us-west-2/*",
+        "arn:aws:s3:::dev-connect-sre-agent-traces-388660028061-us-west-2/*",
+        "arn:aws:s3:::dev-connect-sre-topology-388660028061-us-west-2/*"
+      ]
+    },
+    {
+      "Sid": "ConnectLexLambdaReadAccess",
+      "Effect": "Allow",
+      "Action": [
+        "connect:ListInstances",
+        "connect:DescribeInstance",
+        "connect:ListContactFlows",
+        "connect:DescribeContactFlow",
+        "connect:ListContactFlowModules",
+        "connect:DescribeContactFlowModule",
+        "connect:ListQueues",
+        "connect:DescribeQueue",
+        "connect:ListRoutingProfiles",
+        "connect:DescribeRoutingProfile",
+        "connect:ListUsers",
+        "connect:DescribeUser",
+        "connect:ListUserHierarchyGroups",
+        "connect:DescribeUserHierarchyGroup",
+        "connect:ListHoursOfOperations",
+        "connect:DescribeHoursOfOperation",
+        "connect:ListPhoneNumbersV2",
+        "connect:DescribePhoneNumber",
+        "connect:ListQuickConnects",
+        "connect:DescribeQuickConnect",
+        "connect:ListSecurityProfiles",
+        "connect:DescribeSecurityProfile",
+        "connect:ListPrompts",
+        "connect:DescribePrompt",
+        "connect:ListBots",
+        "connect:ListLambdaFunctions",
+        "lex:ListBots",
+        "lex:ListBotAliases",
+        "lex:DescribeBot",
+        "lex:DescribeBotAlias",
+        "lambda:GetFunction",
+        "lambda:GetFunctionConfiguration",
+        "lambda:ListAliases",
+        "lambda:ListVersionsByFunction",
+        "connect:GetCurrentMetricData",
+        "connect:GetMetricDataV2"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "CloudWatchLogsAndMetricsAccess",
+      "Effect": "Allow",
+      "Action": [
+        "logs:DescribeLogGroups",
+        "logs:DescribeLogStreams",
+        "logs:FilterLogEvents",
+        "logs:GetLogEvents",
+        "logs:StartQuery",
+        "logs:StopQuery",
+        "logs:GetQueryResults",
+        "cloudwatch:GetMetricData",
+        "cloudwatch:GetMetricStatistics",
+        "cloudwatch:ListMetrics",
+        "cloudwatch:DescribeAlarms"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "KmsUseAccess",
+      "Effect": "Allow",
+      "Action": [
+        "kms:Encrypt",
+        "kms:Decrypt",
+        "kms:ReEncrypt*",
+        "kms:GenerateDataKey*",
+        "kms:DescribeKey"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "QueueAndAutomationAccess",
+      "Effect": "Allow",
+      "Action": [
+        "sqs:SendMessage",
+        "sqs:ReceiveMessage",
+        "sqs:DeleteMessage",
+        "sqs:GetQueueAttributes",
+        "ssm:StartAutomationExecution",
+        "ssm:GetAutomationExecution",
+        "states:StartExecution",
+        "states:DescribeExecution"
+      ],
+      "Resource": "*"
+    }
+  ]
+}

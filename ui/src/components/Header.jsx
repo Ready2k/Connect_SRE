@@ -4,7 +4,7 @@ import { Bell, ChevronDown, Wifi, WifiOff } from 'lucide-react';
 import { useAppContext } from '../context/AppContext';
 
 const Header = () => {
-  const { mode, activeInstance, toggleMode, selectInstance, clearInstance } = useAppContext();
+  const { mode, activeInstance, modeLocked, toggleMode, selectInstance, clearInstance } = useAppContext();
   const navigate = useNavigate();
   const [instances, setInstances] = useState([]);
   const [dropdownOpen, setDropdownOpen] = useState(false);
@@ -66,82 +66,106 @@ const Header = () => {
 
       <div style={{ display: 'flex', alignItems: 'center', gap: '1.5rem' }}>
 
-        {/* Demo / Live Toggle */}
-        <div style={{
-          display: 'flex',
-          alignItems: 'center',
-          background: 'rgba(255,255,255,0.05)',
-          borderRadius: '20px',
-          padding: '3px',
-          border: '1px solid var(--border-glass)',
-          gap: '2px'
-        }}>
-          <button
-            id="mode-demo-btn"
-            onClick={() => handleModeToggle('demo')}
-            style={{
-              padding: '0.3rem 0.85rem',
-              borderRadius: '16px',
-              border: 'none',
-              cursor: 'pointer',
-              fontSize: '0.75rem',
-              fontWeight: 600,
-              letterSpacing: '0.05em',
-              transition: 'all 0.2s',
-              background: mode === 'demo'
-                ? 'linear-gradient(135deg, rgba(251,191,36,0.25), rgba(245,158,11,0.15))'
-                : 'transparent',
-              color: mode === 'demo' ? '#fbbf24' : 'var(--text-secondary)',
-              boxShadow: mode === 'demo' ? '0 0 10px rgba(251,191,36,0.2)' : 'none',
-            }}
-          >
-            DEMO
-          </button>
-          <button
-            id="mode-live-btn"
-            onClick={() => handleModeToggle('live')}
-            style={{
-              padding: '0.3rem 0.85rem',
-              borderRadius: '16px',
-              border: 'none',
-              cursor: 'pointer',
-              fontSize: '0.75rem',
-              fontWeight: 600,
-              letterSpacing: '0.05em',
-              transition: 'all 0.2s',
-              background: mode === 'live'
-                ? 'linear-gradient(135deg, rgba(34,197,94,0.25), rgba(16,185,129,0.15))'
-                : 'transparent',
-              color: mode === 'live' ? '#22c55e' : 'var(--text-secondary)',
-              boxShadow: mode === 'live' ? '0 0 10px rgba(34,197,94,0.2)' : 'none',
-              display: 'flex',
-              alignItems: 'center',
-              gap: '0.35rem'
-            }}
-          >
-            {mode === 'live' ? (
-              <span style={{
-                display: 'inline-block',
-                width: 7,
-                height: 7,
-                borderRadius: '50%',
-                background: '#22c55e',
-                boxShadow: '0 0 6px #22c55e',
-                animation: 'pulse 1.5s infinite'
-              }} />
-            ) : (
-              <span style={{
-                display: 'inline-block',
-                width: 7,
-                height: 7,
-                borderRadius: '50%',
-                background: 'var(--text-secondary)',
-                opacity: 0.4
-              }} />
-            )}
-            LIVE
-          </button>
-        </div>
+        {/* Demo / Live Toggle — hidden when service is locked to demo mode */}
+        {modeLocked ? (
+          <div style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: '0.5rem',
+            background: 'linear-gradient(135deg, rgba(251,191,36,0.15), rgba(245,158,11,0.08))',
+            borderRadius: '20px',
+            padding: '0.3rem 0.85rem',
+            border: '1px solid rgba(251,191,36,0.3)',
+          }}>
+            <span style={{
+              display: 'inline-block',
+              width: 7,
+              height: 7,
+              borderRadius: '50%',
+              background: '#fbbf24',
+              boxShadow: '0 0 6px rgba(251,191,36,0.6)',
+            }} />
+            <span style={{ fontSize: '0.75rem', fontWeight: 600, letterSpacing: '0.05em', color: '#fbbf24' }}>
+              DEMO MODE
+            </span>
+          </div>
+        ) : (
+          <div style={{
+            display: 'flex',
+            alignItems: 'center',
+            background: 'rgba(255,255,255,0.05)',
+            borderRadius: '20px',
+            padding: '3px',
+            border: '1px solid var(--border-glass)',
+            gap: '2px'
+          }}>
+            <button
+              id="mode-demo-btn"
+              onClick={() => handleModeToggle('demo')}
+              style={{
+                padding: '0.3rem 0.85rem',
+                borderRadius: '16px',
+                border: 'none',
+                cursor: 'pointer',
+                fontSize: '0.75rem',
+                fontWeight: 600,
+                letterSpacing: '0.05em',
+                transition: 'all 0.2s',
+                background: mode === 'demo'
+                  ? 'linear-gradient(135deg, rgba(251,191,36,0.25), rgba(245,158,11,0.15))'
+                  : 'transparent',
+                color: mode === 'demo' ? '#fbbf24' : 'var(--text-secondary)',
+                boxShadow: mode === 'demo' ? '0 0 10px rgba(251,191,36,0.2)' : 'none',
+              }}
+            >
+              DEMO
+            </button>
+            <button
+              id="mode-live-btn"
+              onClick={() => handleModeToggle('live')}
+              style={{
+                padding: '0.3rem 0.85rem',
+                borderRadius: '16px',
+                border: 'none',
+                cursor: 'pointer',
+                fontSize: '0.75rem',
+                fontWeight: 600,
+                letterSpacing: '0.05em',
+                transition: 'all 0.2s',
+                background: mode === 'live'
+                  ? 'linear-gradient(135deg, rgba(34,197,94,0.25), rgba(16,185,129,0.15))'
+                  : 'transparent',
+                color: mode === 'live' ? '#22c55e' : 'var(--text-secondary)',
+                boxShadow: mode === 'live' ? '0 0 10px rgba(34,197,94,0.2)' : 'none',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '0.35rem'
+              }}
+            >
+              {mode === 'live' ? (
+                <span style={{
+                  display: 'inline-block',
+                  width: 7,
+                  height: 7,
+                  borderRadius: '50%',
+                  background: '#22c55e',
+                  boxShadow: '0 0 6px #22c55e',
+                  animation: 'pulse 1.5s infinite'
+                }} />
+              ) : (
+                <span style={{
+                  display: 'inline-block',
+                  width: 7,
+                  height: 7,
+                  borderRadius: '50%',
+                  background: 'var(--text-secondary)',
+                  opacity: 0.4
+                }} />
+              )}
+              LIVE
+            </button>
+          </div>
+        )}
 
         {/* Instance Selector — only when Live */}
         {mode === 'live' && (

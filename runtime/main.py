@@ -14,9 +14,13 @@ import uuid
 
 from agent import get_supervisor_agent, MODEL_PROVIDER, BEDROCK_MODEL_ID
 
+APP_MODE = os.environ.get("APP_MODE", "live").lower()  # "demo" | "live" | "both"
+
 # Human-readable label shown in traces and agent status responses
 _ACTIVE_MODEL_LABEL = (
-    BEDROCK_MODEL_ID if MODEL_PROVIDER == "bedrock" else "gemini-3.5-flash"
+    "demo (mocked)" if MODEL_PROVIDER == "demo"
+    else BEDROCK_MODEL_ID if MODEL_PROVIDER == "bedrock"
+    else "gemini-3.5-flash"
 )
 
 # ---------------------------------------------------------------------------
@@ -229,7 +233,8 @@ async def investigate_incident_background(payload: IncidentPayload):
                 "message": "Investigation complete",
                 "detail": final_report[:4000],
             })
-            _write_trace(run_id, payload.incidentId, started_at, latency_ms, "success", final_report[:2000], approx_in, approx_out)
+            if APP_MODE != "demo":
+                _write_trace(run_id, payload.incidentId, started_at, latency_ms, "success", final_report[:2000], approx_in, approx_out)
     except Exception as e:
         latency_ms = int((time.time() - start_time) * 1000)
         inv_log.error("Investigation failed latency_ms=%d error=%s", latency_ms, str(e))
@@ -243,24 +248,32 @@ async def investigate_incident_background(payload: IncidentPayload):
             "message": f"Investigation failed: {error_summary[:120]}",
             "detail": str(e),
         })
-        _write_trace(run_id, payload.incidentId, started_at, latency_ms, "error", error_summary)
-        try:
-            dynamodb.Table(INCIDENT_TABLE).update_item(
-                Key={'incidentId': payload.incidentId},
-                UpdateExpression="SET #s = :s",
-                ExpressionAttributeNames={'#s': 'status'},
-                ExpressionAttributeValues={':s': failure_status}
-            )
-        except Exception as db_err:
-            inv_log.error("Failed to update incident status after agent error: %s", db_err)
+        if APP_MODE != "demo":
+            _write_trace(run_id, payload.incidentId, started_at, latency_ms, "error", error_summary)
+            try:
+                dynamodb.Table(INCIDENT_TABLE).update_item(
+                    Key={'incidentId': payload.incidentId},
+                    UpdateExpression="SET #s = :s",
+                    ExpressionAttributeNames={'#s': 'status'},
+                    ExpressionAttributeValues={':s': failure_status}
+                )
+            except Exception as db_err:
+                inv_log.error("Failed to update incident status after agent error: %s", db_err)
 
 @app.get("/health")
 async def health_check():
     return {"status": "healthy"}
 
+@app.get("/api/config")
+async def get_app_config():
+    """Returns runtime configuration consumed by the UI on startup."""
+    return {"appMode": APP_MODE}
+
 @app.get("/api/connect/instances")
 async def get_connect_instances():
     """Auto-discover all Connect instances in this AWS account. Cached 60s."""
+    if APP_MODE == "demo":
+        return {"instances": [], "cached": False, "demo": True}
     global _instances_cache
     now = time.time()
     if _instances_cache["data"] is not None and (now - _instances_cache["fetched_at"]) < 60:
@@ -287,6 +300,8 @@ async def get_connect_instances():
 @app.get("/api/instances/overview")
 async def get_instances_overview():
     """Aggregated overview: all instances with their open incident counts from DynamoDB."""
+    if APP_MODE == "demo":
+        return {"instances": []}
     try:
         # Get instance list (uses cache)
         inst_resp = await get_connect_instances()
