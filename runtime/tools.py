@@ -411,40 +411,198 @@ def query_connect_metrics(instance_id: str, resource_id: str, start_minutes_ago:
 
 def query_connect_ctrs(instance_id: str, contact_id: str) -> str:
     """
-    Query Amazon Connect Contact Trace Records (CTR) for a specific contact.
-    Retrieves queue times, agent routing details, and call metadata.
+    Query Amazon Connect Contact Trace Records (CTR) for a specific contact using
+    the connect:DescribeContact API. Returns queue times, agent routing details,
+    initiation method, channel, and disconnect reason.
 
     Args:
         instance_id (str): The Amazon Connect instance ID.
         contact_id (str): The specific contact ID to look up.
     """
-    config = _get_agent_config()
-    ctr_location = config.get("ctrLocation", "s3://connect-ctr-bucket/")
-    return json.dumps({
-        "status": "success",
-        "message": f"Retrieved CTR from {ctr_location}",
-        "data": {
-            "ContactId": contact_id,
-            "InitialContactId": contact_id,
-            "Channel": "VOICE",
-            "InitiationMethod": "INBOUND",
+    logger.info("[TOOL] query_connect_ctrs instance=%s contact=%s", instance_id, contact_id)
+    try:
+        client = boto3.client("connect", region_name=_REGION)
+        resp = client.describe_contact(InstanceId=instance_id, ContactId=contact_id)
+        contact = resp.get("Contact", {})
+        queue_info = contact.get("QueueInfo", {})
+        agent_info = contact.get("AgentInfo", {})
+        disconnect = contact.get("DisconnectDetails", {})
+        data = {
+            "ContactId": contact.get("Id"),
+            "InitialContactId": contact.get("InitialContactId"),
+            "Channel": contact.get("Channel"),
+            "InitiationMethod": contact.get("InitiationMethod"),
+            "InitiationTimestamp": str(contact.get("InitiationTimestamp", "")),
+            "DisconnectTimestamp": str(contact.get("DisconnectTimestamp", "")),
             "Queue": {
-                "Name": "CustomerService_Queue",
-                "ARN": f"arn:aws:connect:us-west-2:123456789012:instance/{instance_id}/queue/q-123",
-                "EnqueueTimestamp": "2026-05-25T10:05:00Z",
-                "DequeueTimestamp": "2026-05-25T10:15:00Z",
-                "Duration": 600
+                "Id": queue_info.get("Id"),
+                "EnqueueTimestamp": str(queue_info.get("EnqueueTimestamp", "")),
+                "DequeueTimestamp": str(queue_info.get("DequeueTimestamp", "")),
             },
             "Agent": {
-                "Username": "sjenkins",
-                "RoutingProfile": {
-                    "Name": "Tier1_Support",
-                    "ARN": f"arn:aws:connect:us-west-2:123456789012:instance/{instance_id}/routing-profile/rp-456"
-                }
+                "Id": agent_info.get("Id"),
+                "ConnectedToAgentTimestamp": str(agent_info.get("ConnectedToAgentTimestamp", "")),
+                "AgentPauseDurationInSeconds": agent_info.get("AgentPauseDurationInSeconds"),
             },
-            "DisconnectReason": "CUSTOMER_DISCONNECT"
+            "DisconnectReason": disconnect.get("PotentialDisconnectIssue", "CUSTOMER_DISCONNECT"),
+            "Tags": contact.get("Tags", {}),
         }
-    })
+        return json.dumps({"status": "success", "data": data}, default=str)
+    except Exception as e:
+        logger.error("[TOOL] query_connect_ctrs instance=%s contact=%s error=%s", instance_id, contact_id, e)
+        return json.dumps({"status": "error", "message": str(e)})
+
+
+def query_contact_lens(instance_id: str, contact_id: str) -> str:
+    """
+    Retrieve Contact Lens post-contact analysis for a completed contact: conversation
+    transcript segments, overall sentiment (customer + agent), detected issues, and
+    matched categories. Requires Contact Lens to be enabled on the Connect instance.
+
+    Args:
+        instance_id (str): The Amazon Connect instance ID.
+        contact_id (str): The specific contact ID to analyse.
+    """
+    logger.info("[TOOL] query_contact_lens instance=%s contact=%s", instance_id, contact_id)
+    try:
+        client = boto3.client("connect", region_name=_REGION)
+        segments = []
+        kwargs: dict = {
+            "InstanceId": instance_id,
+            "ContactId": contact_id,
+            "MaxResults": 100,
+        }
+        while True:
+            resp = client.list_contact_analysis_segments(**kwargs)
+            segments.extend(resp.get("Segments", []))
+            next_token = resp.get("NextToken")
+            if not next_token:
+                break
+            kwargs["NextToken"] = next_token
+
+        # Separate by segment type for easier agent consumption.
+        transcript: list[dict] = []
+        categories: list[str] = []
+        sentiment_summary: dict = {}
+
+        for seg in segments:
+            if "Transcript" in seg:
+                t = seg["Transcript"]
+                transcript.append({
+                    "Id": t.get("Id"),
+                    "ParticipantRole": t.get("ParticipantRole"),
+                    "Content": t.get("Content"),
+                    "BeginOffsetMillis": t.get("BeginOffsetMillis"),
+                    "Sentiment": t.get("Sentiment"),
+                    "IssuesDetected": t.get("IssuesDetected", []),
+                })
+            if "Categories" in seg:
+                for match in seg["Categories"].get("MatchedCategories", []):
+                    if match not in categories:
+                        categories.append(match)
+            if "PostContactSummary" in seg:
+                sentiment_summary = seg["PostContactSummary"]
+
+        result = {
+            "status": "success",
+            "contactId": contact_id,
+            "transcriptSegments": len(transcript),
+            "transcript": transcript[:50],  # cap at 50 turns to avoid oversized payloads
+            "detectedCategories": categories,
+            "postContactSummary": sentiment_summary,
+        }
+        return json.dumps(result, default=str)
+    except client.exceptions.ResourceNotFoundException:
+        return json.dumps({
+            "status": "not_found",
+            "message": f"No Contact Lens analysis found for contact {contact_id}. "
+                       "Contact Lens may not be enabled for this flow, or the contact is too recent.",
+        })
+    except Exception as e:
+        logger.error("[TOOL] query_contact_lens instance=%s contact=%s error=%s", instance_id, contact_id, e)
+        return json.dumps({"status": "error", "message": str(e)})
+
+
+def query_agent_events(instance_id: str, queue_id: str = "", start_minutes_ago: int = 30) -> str:
+    """
+    Query current agent availability and recent contact activity to assess staffing
+    impact during an incident. Uses connect:GetCurrentUserData for live agent states
+    and connect:SearchContacts to surface contacts handled in the time window.
+
+    Args:
+        instance_id (str): The Amazon Connect instance ID.
+        queue_id (str): Optional queue ID to scope results (clean UUID, no ARN prefix).
+        start_minutes_ago (int): How far back to search for contacts (default 30).
+    """
+    logger.info("[TOOL] query_agent_events instance=%s queue=%s window=%dm",
+                instance_id, queue_id, start_minutes_ago)
+    client = boto3.client("connect", region_name=_REGION)
+    region = _REGION
+    try:
+        account_id = boto3.client("sts", region_name=region).get_caller_identity()["Account"]
+    except Exception:
+        account_id = "unknown"
+    instance_arn = f"arn:aws:connect:{region}:{account_id}:instance/{instance_id}"
+
+    result: dict = {"status": "success", "instanceId": instance_id}
+    clean_queue_id = (queue_id.split(":")[-1] if ":" in queue_id else queue_id) if queue_id else ""
+
+    # 1. Live agent states via GetCurrentUserData
+    try:
+        filters: dict = {}
+        if clean_queue_id:
+            filters["Queues"] = [f"{instance_arn}/queue/{clean_queue_id}"]
+        user_resp = client.get_current_user_data(
+            InstanceId=instance_id,
+            Filters=filters,
+            MaxResults=100,
+        )
+        agents = user_resp.get("UserDataList", [])
+        state_counts: dict[str, int] = {}
+        for agent in agents:
+            status = agent.get("Status", {}).get("StatusName", "Unknown")
+            state_counts[status] = state_counts.get(status, 0) + 1
+        result["agentStateSummary"] = state_counts
+        result["totalAgentsReturned"] = len(agents)
+    except Exception as e:
+        result["agentStateSummary"] = {"error": str(e)}
+
+    # 2. Recent contacts via SearchContacts
+    try:
+        now = datetime.now(timezone.utc)
+        start_time = now - timedelta(minutes=start_minutes_ago)
+        search_criteria: dict = {}
+        if clean_queue_id:
+            search_criteria["QueueIds"] = [clean_queue_id]
+        search_resp = client.search_contacts(
+            InstanceId=instance_id,
+            TimeRange={
+                "Type": "INITIATION_TIMESTAMP",
+                "StartTime": start_time,
+                "EndTime": now,
+            },
+            SearchCriteria=search_criteria,
+            MaxResults=25,
+        )
+        contacts = search_resp.get("Contacts", [])
+        result["recentContacts"] = [
+            {
+                "ContactId": c.get("Id"),
+                "InitiationTimestamp": str(c.get("InitiationTimestamp", "")),
+                "DisconnectTimestamp": str(c.get("DisconnectTimestamp", "")),
+                "InitiationMethod": c.get("InitiationMethod"),
+                "AgentId": c.get("AgentInfo", {}).get("Id"),
+                "QueueId": c.get("QueueInfo", {}).get("Id"),
+                "Channel": c.get("Channel"),
+            }
+            for c in contacts
+        ]
+        result["recentContactCount"] = search_resp.get("TotalCount", len(contacts))
+    except Exception as e:
+        result["recentContacts"] = []
+        result["searchError"] = str(e)
+
+    return json.dumps(result, default=str)
 
 
 def query_cloudwatch_flow_logs(instance_id: str, flow_id: str, start_minutes_ago: int = 60) -> str:

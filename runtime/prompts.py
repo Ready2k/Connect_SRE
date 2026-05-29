@@ -77,7 +77,9 @@ Call the matching specialist tool for each investigation task:
 - `recall_prior_incidents(resource_id, incident_type)`: **Call this first.** Retrieves past incidents for this resource — known patterns, root causes, and what remediation succeeded or failed before.
 - `query_topology(node_id)`: Understand node dependencies.
 - `query_recent_mutations(resource_id)`: See recent config changes.
-- `query_connect_ctrs(instance_id, contact_id)`: Fetches full Amazon Connect Contact Trace Records (CTR) to see queue times, agent routing details, and call metadata.
+- `query_connect_ctrs(instance_id, contact_id)`: Fetches full Amazon Connect Contact Trace Record for a specific contact — queue times, agent routing, initiation method, and disconnect reason via the Connect DescribeContact API.
+- `query_contact_lens(instance_id, contact_id)`: Fetches Contact Lens post-contact analysis — conversation transcript, sentiment per turn, detected customer issues, and matched categories. Use when you have a representative contact ID and need to understand the customer experience during the incident.
+- `query_agent_events(instance_id, queue_id, start_minutes_ago)`: Returns live agent state summary (available/busy/offline counts) and recent contact volume for a queue via the Connect GetCurrentUserData and SearchContacts APIs. Use to quantify staffing impact or confirm a sudden drop in agent availability.
 - `propose_remediation(action_type, params, incident_id, justification)`: Submits a remediation action for human approval. Only you, the Supervisor, may call this.
 - `record_investigation_memory(resource_id, incident_type, pattern, root_cause, resolution, outcome, incident_id)`: **Call this last.** Saves what you learned so future investigations on this resource don't start from scratch.
 
@@ -145,9 +147,13 @@ Focus on:
 Tools available to you:
 - `query_topology(node_id)`: Get a queue's metadata and its connected routing profiles and flows.
 - `query_connect_metrics(instance_id, resource_id)`: Get real-time queue size and oldest contact age.
+- `query_connect_ctrs(instance_id, contact_id)`: Get full Contact Trace Record for a specific contact — queue times, agent, initiation method, disconnect reason.
+- `query_contact_lens(instance_id, contact_id)`: Get Contact Lens post-contact analysis for a specific contact — transcript, sentiment, detected issues, and matched categories. Use this when the queue has elevated abandonment or negative sentiment signals.
+- `query_agent_events(instance_id, queue_id, start_minutes_ago)`: Get live agent state summary (available/busy/offline counts) and recent contacts for a queue. Use this to diagnose staffing gaps or sudden drops in agent availability.
 
 Start by querying the queue's topology to understand its routing profile assignments, then pull live metrics to confirm the issue.
-Return: queue status, current depth, configured routing profiles, and whether the routing chain is intact.
+If metrics show high abandonment or long wait times, call `query_agent_events` to check agent availability before assuming a routing misconfiguration.
+Return: queue status, current depth, configured routing profiles, agent availability summary, and whether the routing chain is intact.
 """
 
 LEX_BOT_PROMPT = """
@@ -218,13 +224,19 @@ Focus on:
 - Upstream traversal: which entry points (Phone Numbers) are now unreachable because of this node failure?
 - Counting affected flows, queues, and modules at each depth level
 - Identifying whether a Sev1 (total outage of an entry point) or Sev2 (partial degradation) is more appropriate
+- Quantifying live customer impact: how many contacts are currently in-flight or were recently handled in the affected queues?
 
 Tools available to you:
 - `calculate_blast_radius(start_node_id, max_depth, direction)`: Traverses the topology graph to find all upstream dependents.
 - `query_topology(node_id)`: Get a node's metadata to understand its type and business label.
+- `query_agent_events(instance_id, queue_id, start_minutes_ago)`: Get live agent state counts and recent contact volume for each affected queue. Use this to quantify how many customers were actively in queue when the failure occurred.
+- `query_contact_lens(instance_id, contact_id)`: If you have a representative contact ID from the incident, use this to check whether customers were already expressing frustration (negative sentiment, detected issues) before the failure peaked.
 
-Always use direction='upstream' to find what depends on the broken node. Use max_depth=5 to ensure you reach phone number entry points.
-Return: total impacted node count, list of affected entry points (phone numbers), and a recommended severity level.
+Investigation sequence:
+1. Call `calculate_blast_radius` with direction='upstream' and max_depth=5 to reach phone number entry points.
+2. For each affected queue node, call `query_agent_events` to get the in-flight contact count and agent availability at time of incident.
+3. Optionally call `query_contact_lens` on a sample contact if sentiment data would help size the customer experience impact.
+Return: total impacted node count, list of affected entry points (phone numbers), estimated contacts affected, and a recommended severity level.
 """
 
 RUNBOOK_PROMPT = """

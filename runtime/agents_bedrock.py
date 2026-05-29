@@ -38,6 +38,8 @@ from tools import (
     query_recent_mutations as _query_recent_mutations,
     query_topology as _query_topology,
     query_connect_ctrs as _query_connect_ctrs,
+    query_contact_lens as _query_contact_lens,
+    query_agent_events as _query_agent_events,
     query_lex_bot_health as _query_lex_bot_health,
     recall_prior_incidents as _recall_prior_incidents,
     record_investigation_memory as _record_investigation_memory,
@@ -53,6 +55,8 @@ fetch_runbook = _strands_tool(_fetch_runbook)
 propose_remediation = _strands_tool(_propose_remediation)
 query_connect_metrics = _strands_tool(_query_connect_metrics)
 query_connect_ctrs = _strands_tool(_query_connect_ctrs)
+query_contact_lens = _strands_tool(_query_contact_lens)
+query_agent_events = _strands_tool(_query_agent_events)
 query_cloudwatch_flow_logs = _strands_tool(_query_cloudwatch_flow_logs)
 query_lex_bot_health = _strands_tool(_query_lex_bot_health)
 recall_prior_incidents = _strands_tool(_recall_prior_incidents)
@@ -144,7 +148,8 @@ def build_strands_supervisor(model, trace_fn=None):
     queue_agent = Agent(
         model=model,
         system_prompt=QUEUE_ROUTING_PROMPT,
-        tools=[query_topology, query_connect_metrics, query_connect_ctrs],
+        tools=[query_topology, query_connect_metrics, query_connect_ctrs,
+               query_contact_lens, query_agent_events],
         callback_handler=null_callback_handler,
     )
 
@@ -172,7 +177,7 @@ def build_strands_supervisor(model, trace_fn=None):
     impact_agent = Agent(
         model=model,
         system_prompt=CUSTOMER_IMPACT_PROMPT,
-        tools=[calculate_blast_radius, query_topology],
+        tools=[calculate_blast_radius, query_topology, query_contact_lens, query_agent_events],
         callback_handler=null_callback_handler,
     )
 
@@ -384,6 +389,8 @@ def build_strands_supervisor(model, trace_fn=None):
             query_recent_mutations,
             query_topology,
             query_connect_ctrs,
+            query_contact_lens,
+            query_agent_events,
             propose_remediation,
             recall_prior_incidents,
             record_investigation_memory,

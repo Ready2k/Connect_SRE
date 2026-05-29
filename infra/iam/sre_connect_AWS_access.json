@@ -116,7 +116,11 @@
         "lambda:ListAliases",
         "lambda:ListVersionsByFunction",
         "connect:GetCurrentMetricData",
-        "connect:GetMetricDataV2"
+        "connect:GetMetricDataV2",
+        "connect:DescribeContact",
+        "connect:SearchContacts",
+        "connect:GetCurrentUserData",
+        "connect:ListContactAnalysisSegments"
       ],
       "Resource": "*"
     },
