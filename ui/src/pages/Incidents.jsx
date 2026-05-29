@@ -194,7 +194,7 @@ const Incidents = () => {
             // Reflect terminal status in local state so the panel updates
             const newStatus = last.type === 'complete' ? 'Resolved' : 'Failed';
             setSelected(prev => prev ? { ...prev, status: newStatus } : prev);
-            setIncidents(prev => prev.map(i =>
+            setAllIncidents(prev => prev.map(i =>
               i.incidentId === selected.incidentId ? { ...i, status: newStatus } : i
             ));
             clearInterval(stepsTimerRef.current);
@@ -234,7 +234,7 @@ const Incidents = () => {
         setTriggering(false);
         return;
       }
-      setIncidents(prev => prev.map(inc => 
+      setAllIncidents(prev => prev.map(inc =>
         inc.incidentId === incidentId ? { ...inc, status: "Investigating" } : inc
       ));
       if (selected && selected.incidentId === incidentId) {
@@ -257,7 +257,7 @@ const Incidents = () => {
     })
     .then(res => res.json())
     .then(() => {
-      setIncidents(prev => prev.filter(inc => inc.incidentId !== incidentId));
+      setAllIncidents(prev => prev.filter(inc => inc.incidentId !== incidentId));
       setSelected(null);
       setDismissing(false);
     })
