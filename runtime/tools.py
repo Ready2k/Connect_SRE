@@ -280,6 +280,94 @@ def _get_agent_config() -> dict:
     return default_config
 
 
+def query_lex_bot_health(node_id: str, start_minutes_ago: int = 60) -> str:
+    """
+    Check the health of an Amazon Lex V2 bot alias referenced by Connect flows.
+    Calls the lexv2-models API to get alias status, then queries CloudWatch for NLU
+    error metrics (MissedUtteranceCount, RuntimePollingFrequency).
+
+    Args:
+        node_id (str): The topology node ID for the Lex bot, in the form
+                       'lex:arn:aws:lex:REGION:ACCOUNT:bot-alias/BOT_ID/ALIAS_ID'.
+        start_minutes_ago (int): Minutes ago to start CloudWatch metric window (default 60).
+    """
+    import datetime
+
+    t0 = time.time()
+    logger.info("[TOOL] query_lex_bot_health node_id=%s", node_id)
+
+    # Strip leading 'lex:' prefix and parse the V2 ARN.
+    # V2 format: arn:aws:lex:REGION:ACCOUNT:bot-alias/BOT_ID/ALIAS_ID
+    arn = node_id[4:] if node_id.startswith("lex:") else node_id
+    try:
+        parts = arn.split("bot-alias/")
+        if len(parts) != 2:
+            return json.dumps({"status": "error", "message": f"Cannot parse Lex V2 ARN from node_id: {node_id}"})
+        ids = parts[1].split("/")
+        if len(ids) != 2:
+            return json.dumps({"status": "error", "message": f"Unexpected bot-alias path in ARN: {arn}"})
+        bot_id, alias_id = ids[0], ids[1]
+    except Exception as e:
+        return json.dumps({"status": "error", "message": f"ARN parse error: {e}"})
+
+    region = _REGION
+    lex_client = boto3.client("lexv2-models", region_name=region)
+    cw_client = boto3.client("cloudwatch", region_name=region)
+
+    result = {"status": "success", "botId": bot_id, "botAliasId": alias_id, "arn": arn}
+
+    # 1. Alias status via lexv2-models
+    try:
+        alias_detail = lex_client.describe_bot_alias(botId=bot_id, botAliasId=alias_id)
+        result["aliasName"] = alias_detail.get("botAliasName", alias_id)
+        result["aliasStatus"] = alias_detail.get("botAliasStatus", "Unknown")
+        # aliasStatus values: Creating | Available | Deleting | Failed
+        result["botVersion"] = alias_detail.get("botVersion", "Unknown")
+        result["localeSettings"] = list(alias_detail.get("botAliasLocaleSettings", {}).keys())
+    except Exception as e:
+        result["aliasStatus"] = "Unknown"
+        result["aliasError"] = str(e)
+
+    # 2. Bot-level status
+    try:
+        bot_detail = lex_client.describe_bot(botId=bot_id)
+        result["botName"] = bot_detail.get("botName", bot_id)
+        result["botStatus"] = bot_detail.get("botStatus", "Unknown")
+        # botStatus values: Creating | Available | Inactive | Deleting | Failed | Versioning | Importing
+    except Exception as e:
+        result["botStatus"] = "Unknown"
+        result["botError"] = str(e)
+
+    # 3. CloudWatch NLU metrics (AWS/Lex namespace, V2 dimensions)
+    now = datetime.datetime.utcnow()
+    start = now - datetime.timedelta(minutes=start_minutes_ago)
+    dimensions = [
+        {"Name": "BotName", "Value": result.get("botName", bot_id)},
+        {"Name": "BotAliasName", "Value": result.get("aliasName", alias_id)},
+    ]
+    cw_metrics = {}
+    for metric_name in ("MissedUtteranceCount", "RuntimePollingRequests"):
+        try:
+            resp = cw_client.get_metric_statistics(
+                Namespace="AWS/Lex",
+                MetricName=metric_name,
+                Dimensions=dimensions,
+                StartTime=start,
+                EndTime=now,
+                Period=int(start_minutes_ago * 60),
+                Statistics=["Sum"],
+            )
+            datapoints = resp.get("Datapoints", [])
+            cw_metrics[metric_name] = datapoints[0]["Sum"] if datapoints else 0
+        except Exception as e:
+            cw_metrics[metric_name] = f"error: {e}"
+    result["cloudwatchMetrics"] = cw_metrics
+
+    logger.info("[TOOL] query_lex_bot_health node_id=%s alias_status=%s latency_ms=%d",
+                node_id, result.get("aliasStatus"), int((time.time() - t0) * 1000))
+    return json.dumps(result, default=str)
+
+
 def query_connect_metrics(instance_id: str, resource_id: str, start_minutes_ago: int = 60) -> str:
     """
     Query historical Amazon Connect metrics (e.g., ContactFlowFatalErrors, ContactFlowErrors).
@@ -302,14 +390,15 @@ def query_connect_metrics(instance_id: str, resource_id: str, start_minutes_ago:
         region = os.environ.get("AWS_REGION", "us-west-2")
         account_id = boto3.client("sts").get_caller_identity()["Account"]
         connect_client = boto3.client("connect", region_name=region)
-        resource_arn = f"arn:aws:connect:{region}:{account_id}:instance/{instance_id}/{resource_type.lower()}/{clean_resource_id}"
+        instance_arn = f"arn:aws:connect:{region}:{account_id}:instance/{instance_id}"
+        resource_arn = f"{instance_arn}/{resource_type.lower()}/{clean_resource_id}"
         metrics = (
-            [{"Name": "CONTACT_FLOW_FATAL_ERROR"}, {"Name": "CONTACT_FLOW_ERROR"}]
+            [{"Name": "AVG_FLOW_TIME"}, {"Name": "CONTACTS_FLOW_OUT"}]
             if resource_type == "CONTACT_FLOW"
-            else [{"Name": "QUEUE_SIZE"}]
+            else [{"Name": "CONTACTS_QUEUED"}, {"Name": "CONTACTS_ABANDONED"}, {"Name": "MAX_QUEUED_TIME"}]
         )
         response = connect_client.get_metric_data_v2(
-            ResourceArn=resource_arn,
+            ResourceArn=instance_arn,
             StartTime=start_time,
             EndTime=now,
             Filters=[{"FilterKey": resource_type, "FilterValues": [resource_arn]}],
@@ -394,7 +483,7 @@ def query_cloudwatch_flow_logs(instance_id: str, flow_id: str, start_minutes_ago
         pass
 
     try:
-        query = f"fields @timestamp, @message | filter ContactFlowId = '{clean_flow_id}' and Level = 'ERROR' | sort @timestamp desc | limit 20"
+        query = f"fields @timestamp, Action, Parameters, @message | filter ContactFlowId like '{clean_flow_id}' | filter @message like /[Ee]rror/ | sort @timestamp desc | limit 20"
         start_resp = logs_client.start_query(
             logGroupName=log_group_name,
             startTime=start_time,

@@ -67,9 +67,15 @@ def handle_full_scan():
             )
 
             # 2. Scan Contact Flows
-            flows = CONNECT.list_contact_flows(InstanceId=instance_id).get(
-                "ContactFlowSummaryList", []
-            )
+            flows = []
+            paginator_kwargs = {"InstanceId": instance_id}
+            while True:
+                resp = CONNECT.list_contact_flows(**paginator_kwargs)
+                flows.extend(resp.get("ContactFlowSummaryList", []))
+                next_token = resp.get("NextToken")
+                if not next_token:
+                    break
+                paginator_kwargs["NextToken"] = next_token
             for f in flows:
                 flow_id = f.get("Id")
                 flow_details = CONNECT.describe_contact_flow(
@@ -97,9 +103,15 @@ def handle_full_scan():
                     extract_flow_edges(instance_id, flow_id, content, now)
 
             # 3. Scan Contact Flow Modules
-            modules = CONNECT.list_contact_flow_modules(InstanceId=instance_id).get(
-                "ContactFlowModuleSummaryList", []
-            )
+            modules = []
+            paginator_kwargs = {"InstanceId": instance_id}
+            while True:
+                resp = CONNECT.list_contact_flow_modules(**paginator_kwargs)
+                modules.extend(resp.get("ContactFlowModuleSummaryList", []))
+                next_token = resp.get("NextToken")
+                if not next_token:
+                    break
+                paginator_kwargs["NextToken"] = next_token
             for m in modules:
                 mod_id = m.get("Id")
                 mod_details = CONNECT.describe_contact_flow_module(
@@ -121,9 +133,15 @@ def handle_full_scan():
                 )
 
             # 4. Scan Queues
-            queues = CONNECT.list_queues(
-                InstanceId=instance_id, QueueTypes=["STANDARD"]
-            ).get("QueueSummaryList", [])
+            queues = []
+            paginator_kwargs = {"InstanceId": instance_id, "QueueTypes": ["STANDARD"]}
+            while True:
+                resp = CONNECT.list_queues(**paginator_kwargs)
+                queues.extend(resp.get("QueueSummaryList", []))
+                next_token = resp.get("NextToken")
+                if not next_token:
+                    break
+                paginator_kwargs["NextToken"] = next_token
             for q in queues:
                 queue_id = q.get("Id")
                 queue_details = CONNECT.describe_queue(
@@ -145,9 +163,15 @@ def handle_full_scan():
                 )
 
             # 5. Scan Routing Profiles
-            routing_profiles = CONNECT.list_routing_profiles(
-                InstanceId=instance_id
-            ).get("RoutingProfileSummaryList", [])
+            routing_profiles = []
+            paginator_kwargs = {"InstanceId": instance_id}
+            while True:
+                resp = CONNECT.list_routing_profiles(**paginator_kwargs)
+                routing_profiles.extend(resp.get("RoutingProfileSummaryList", []))
+                next_token = resp.get("NextToken")
+                if not next_token:
+                    break
+                paginator_kwargs["NextToken"] = next_token
             for rp in routing_profiles:
                 rp_id = rp.get("Id")
                 write_metadata(
@@ -165,7 +189,49 @@ def handle_full_scan():
                     now,
                 )
 
-            # 6. Scan Phone Numbers
+            # 6. Scan Lex V2 bots associated with the instance (instance-level association,
+            #    independent of whether any flow references them by ARN in its content).
+            try:
+                bots_resp = CONNECT.list_bots(InstanceId=instance_id, LexVersion="V2", MaxResults=25)
+                bot_list = bots_resp.get("LexBots") or bots_resp.get("LexBotConfigSummaryList", [])
+                for b in bot_list:
+                    inner = b.get("LexBotConfig", b)
+                    alias_arn = inner.get("LexV2Bot", {}).get("AliasArn", "")
+                    if not alias_arn:
+                        continue
+                    node_id = f"lex:{alias_arn}"
+                    write_edge(f"instance:{instance_id}", "INSTANCE_HAS_LEX", node_id, now)
+                    try:
+                        parts = alias_arn.split("bot-alias/")
+                        if len(parts) == 2:
+                            ids = parts[1].split("/")
+                            if len(ids) == 2:
+                                bot_id, alias_id = ids[0], ids[1]
+                                alias_detail = LEX.describe_bot_alias(botId=bot_id, botAliasId=alias_id)
+                                write_metadata(
+                                    node_id=node_id,
+                                    node_type="lex",
+                                    label=alias_detail.get("botAliasName", alias_id),
+                                    arn=alias_arn,
+                                    status=alias_detail.get("botAliasStatus", "Unknown"),
+                                    now=now,
+                                    extra={"botId": bot_id, "botAliasId": alias_id,
+                                           "botVersion": alias_detail.get("botVersion", "Unknown")},
+                                )
+                    except Exception as e:
+                        print(f"Warning: Could not describe Lex alias for {alias_arn}: {e}")
+                        write_metadata(
+                            node_id=node_id,
+                            node_type="lex",
+                            label=alias_arn.split("/")[-1],
+                            arn=alias_arn,
+                            status="Unknown",
+                            now=now,
+                        )
+            except Exception as e:
+                print(f"Warning: Could not list Lex bots for {instance_id}: {e}")
+
+            # 7. Scan Phone Numbers
             try:
                 phone_numbers = CONNECT.list_phone_numbers_v2(
                     TargetArn=instance_details.get("Arn")
@@ -266,20 +332,21 @@ def handle_partial_scan(payload):
         print(f"Failed targeted scan update for {resource_type} {resource_id}: {str(e)}")
 
 
-def write_metadata(node_id, node_type, label, arn, status, now):
+def write_metadata(node_id, node_type, label, arn, status, now, extra=None):
     table = DYNAMODB.Table(TOPOLOGY_TABLE_NAME)
-    table.put_item(
-        Item={
-            "nodeId": node_id,
-            "edgeTypeTarget": "METADATA",
-            "nodeType": node_type,
-            "label": label,
-            "arn": arn,
-            "status": status,
-            "lastSeenAt": now,
-            "scanConfidence": "1.0",
-        }
-    )
+    item = {
+        "nodeId": node_id,
+        "edgeTypeTarget": "METADATA",
+        "nodeType": node_type,
+        "label": label,
+        "arn": arn,
+        "status": status,
+        "lastSeenAt": now,
+        "scanConfidence": "1.0",
+    }
+    if extra:
+        item.update(extra)
+    table.put_item(Item=item)
 
 
 def write_edge(source, edge_type, target, now):
@@ -305,10 +372,43 @@ def extract_flow_edges(instance_id, flow_id, content, now):
     for l_arn in lambda_arns:
         write_edge(f"flow:{flow_id}", "FLOW_USES_LAMBDA", f"lambda:{l_arn}", now)
 
-    # 2. Extract Lex bots
-    lex_arns = set(re.findall(r'arn:aws:lex:[^"]+?:bot-alias/[A-Z0-9]+/[A-Z0-9]+', content))
+    # 2. Extract Lex V2 bots
+    # ARN format: arn:aws:lex:region:account:bot-alias/BOT_ID/ALIAS_ID
+    lex_arns = set(re.findall(r'arn:aws:lex:[^"]+?:bot-alias/[A-Za-z0-9]+/[A-Za-z0-9]+', content))
     for lx_arn in lex_arns:
-        write_edge(f"flow:{flow_id}", "FLOW_USES_LEX", f"lex:{lx_arn}", now)
+        node_id = f"lex:{lx_arn}"
+        write_edge(f"flow:{flow_id}", "FLOW_USES_LEX", node_id, now)
+        # Write metadata using the Lex V2 API (lexv2-models).
+        # ARN format: arn:aws:lex:region:account:bot-alias/BOT_ID/ALIAS_ID
+        try:
+            parts = lx_arn.split("bot-alias/")
+            if len(parts) == 2:
+                ids = parts[1].split("/")
+                if len(ids) == 2:
+                    bot_id, alias_id = ids[0], ids[1]
+                    alias_detail = LEX.describe_bot_alias(botId=bot_id, botAliasId=alias_id)
+                    alias_name = alias_detail.get("botAliasName", alias_id)
+                    alias_status = alias_detail.get("botAliasStatus", "Unknown")
+                    bot_version = alias_detail.get("botVersion", "Unknown")
+                    write_metadata(
+                        node_id=node_id,
+                        node_type="lex",
+                        label=alias_name,
+                        arn=lx_arn,
+                        status=alias_status,
+                        now=now,
+                        extra={"botId": bot_id, "botAliasId": alias_id, "botVersion": bot_version},
+                    )
+        except Exception as e:
+            print(f"Warning: Could not describe Lex alias for {lx_arn}: {e}")
+            write_metadata(
+                node_id=node_id,
+                node_type="lex",
+                label=lx_arn.split("/")[-1],
+                arn=lx_arn,
+                status="Unknown",
+                now=now,
+            )
 
     # 3. Extract Queues
     # Format: arn:aws:connect:region:account:instance/id/queue/queue-id

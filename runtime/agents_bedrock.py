@@ -38,6 +38,7 @@ from tools import (
     query_recent_mutations as _query_recent_mutations,
     query_topology as _query_topology,
     query_connect_ctrs as _query_connect_ctrs,
+    query_lex_bot_health as _query_lex_bot_health,
     recall_prior_incidents as _recall_prior_incidents,
     record_investigation_memory as _record_investigation_memory,
 )
@@ -53,6 +54,7 @@ propose_remediation = _strands_tool(_propose_remediation)
 query_connect_metrics = _strands_tool(_query_connect_metrics)
 query_connect_ctrs = _strands_tool(_query_connect_ctrs)
 query_cloudwatch_flow_logs = _strands_tool(_query_cloudwatch_flow_logs)
+query_lex_bot_health = _strands_tool(_query_lex_bot_health)
 recall_prior_incidents = _strands_tool(_recall_prior_incidents)
 record_investigation_memory = _strands_tool(_record_investigation_memory)
 
@@ -149,7 +151,7 @@ def build_strands_supervisor(model, trace_fn=None):
     lex_agent = Agent(
         model=model,
         system_prompt=LEX_BOT_PROMPT,
-        tools=[query_topology, query_connect_metrics],
+        tools=[query_topology, query_lex_bot_health, query_connect_metrics],
         callback_handler=null_callback_handler,
     )
 

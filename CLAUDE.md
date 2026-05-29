@@ -21,6 +21,11 @@ AWS profile for all infrastructure operations is `connect-sre-dev` (us-west-2). 
 
 # Stop
 ./stop.sh
+
+# View container logs
+./logs.sh              # last 100 lines
+./logs.sh -f           # follow (tail -f)
+./logs.sh -n 200       # last N lines
 ```
 
 `start.sh` prompts for provider choice:
@@ -42,11 +47,25 @@ npm run lint
 All scripts require `--profile connect-sre-dev` (already embedded). Run from repo root:
 
 ```bash
+./infra/scripts/deploy_all.sh                 # deploy all Lambdas in one shot
 ./infra/scripts/deploy_normalizer.sh
 ./infra/scripts/deploy_topology_scanner.sh
-./infra/scripts/test_normalizer.sh       # fires synthetic CloudWatch alarm
-./infra/scripts/test_topology_scanner.sh # triggers full scan
-./infra/scripts/update_dev_ip.sh         # update security group with current public IP
+./infra/scripts/deploy_action_dispatcher.sh
+./infra/scripts/test_normalizer.sh            # fires synthetic CloudWatch alarm
+./infra/scripts/test_topology_scanner.sh      # triggers full scan
+./infra/scripts/test_action_dispatcher.sh
+./infra/scripts/update_dev_ip.sh              # update security group with current public IP
+./infra/scripts/build_and_push.sh             # build + push Docker image to ECR
+```
+
+### Seeding a fresh environment
+
+Run once after deploying the stack to populate DynamoDB tables (policies, tool registry, journeys, topology stub, runbooks):
+
+```bash
+./infra/scripts/run_seeds.sh
+# Then populate the topology graph for a real Connect instance:
+CONNECT_INSTANCE_IDS=<uuid> python infra/src/topology_scanner.py
 ```
 
 ### Lambda functions (local execution)
@@ -60,16 +79,30 @@ python topology_scanner.py
 # Same pattern for normalizer.py, action_dispatcher.py, seed_topology.py
 ```
 
+### Testing the agent
+
+```bash
+# Inside the running container (tests tool signatures + Strands registry + live Bedrock call):
+docker exec <container_id> python /app/test_agent.py
+
+# Locally — runs only tool signature validation (no Strands/Bedrock required):
+cd runtime && python test_agent.py
+```
+
 ### CloudFormation
 
 ```bash
 aws cloudformation deploy \
   --template-file infra/cloudformation/connect-sre-agent-platform.yaml \
   --stack-name dev-connect-sre-platform \
-  --parameter-overrides EnvironmentName=dev AllowedAdminCIDR=<your-ip>/32 \
+  --parameter-overrides \
+      EnvironmentName=dev \
+      PrimaryConnectInstanceId=<connect-instance-uuid> \
   --capabilities CAPABILITY_NAMED_IAM \
   --profile connect-sre-dev
 ```
+
+`PrimaryConnectInstanceId` is optional but required to activate contact flow log ingestion (subscription filter on `/aws/connect/{instanceId}`). Omit it and the subscription filter is not created.
 
 ## Architecture
 
@@ -140,10 +173,14 @@ Notable pages: `/config` loads active model config from `/api/models/config` on 
 - **Approvals** (`dev-connect-sre-approvals`) — state machine: `PENDING` → `AUTO_APPROVED` / approved / rejected.
 - **Policy** (`dev-connect-sre-policy-config`) — active policies evaluated by `propose_remediation` at tool-call time, not at dispatch.
 - **Agent runs** (`dev-connect-sre-agent-runs`) — trace records written per agent invocation.
+- **Agent steps** (`dev-connect-sre-agent-steps`) — fine-grained per-step trace data, TTL 90 days.
+- **Journey map** (`dev-connect-sre-journey-map`) — customer journey definitions seeded by `seed_journeys.py`.
+- **Tool registry** (`dev-connect-sre-tool-registry`) — available tool metadata seeded by `seed_tools.py`.
+- **Memory** (`dev-connect-sre-memory`) — agent investigation memory for `recall_prior_incidents` / `record_investigation_memory` tools.
 
 ### Infrastructure
 
-`infra/cloudformation/connect-sre-agent-platform.yaml` is the primary template (`sre-agent-platform.yaml` is a compatibility copy — keep in sync). CloudFormation manages VPC (public subnets, no NAT Gateway), ALB locked to `AllowedAdminCIDR`, ECS Fargate, Lambda IAM roles, DynamoDB tables (TTL: topology 180d, evidence 90d), EventBridge rules, SQS queues.
+`infra/cloudformation/connect-sre-agent-platform.yaml` is the primary template (`sre-agent-platform.yaml` is a compatibility copy — keep in sync). CloudFormation manages VPC (public subnets, no NAT Gateway), ALB, ECS Fargate, Lambda IAM roles, DynamoDB tables (TTL: topology 180d, evidence 90d), EventBridge rules, SQS queues, and a conditional CloudWatch Logs subscription filter for contact flow error ingestion.
 
 Feature flags (CloudFormation parameters, both default `false`):
 - `EnableConnectWriteActions` — allows modifying Connect resources

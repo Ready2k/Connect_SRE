@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAppContext } from '../context/AppContext';
+import ReactMarkdown from 'react-markdown';
 import { Clock, Activity, ExternalLink } from 'lucide-react';
 
 const AGENT_COLOR = {
@@ -401,9 +402,24 @@ const Incidents = () => {
                           {app.status}
                         </span>
                       </div>
-                      <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: '1rem' }}>
-                        <strong>Justification:</strong> {app.justification}
-                      </p>
+                      <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: '1rem' }}>
+                        <strong style={{ display: 'block', marginBottom: '0.4rem', color: 'var(--text-primary)' }}>Justification</strong>
+                        <ReactMarkdown
+                          components={{
+                            ul: ({ children }) => <ul style={{ paddingLeft: '1.2rem', margin: 0, display: 'flex', flexDirection: 'column', gap: '0.3rem' }}>{children}</ul>,
+                            li: ({ children }) => <li style={{ lineHeight: '1.5' }}>{children}</li>,
+                            p: ({ children }) => <p style={{ margin: 0, lineHeight: '1.5' }}>{children}</p>,
+                          }}
+                        >
+                          {app.justification
+                            ? app.justification
+                                .split(/(?<=\.)\s+/)
+                                .filter(Boolean)
+                                .map(s => `- ${s}`)
+                                .join('\n')
+                            : '—'}
+                        </ReactMarkdown>
+                      </div>
                       
                       {app.status === 'PENDING' && (
                         <div style={{ display: 'flex', gap: '0.5rem', justifyContent: 'flex-end' }}>

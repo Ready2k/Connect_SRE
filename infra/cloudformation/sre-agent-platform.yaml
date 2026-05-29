@@ -23,6 +23,17 @@ Parameters:
     Default: ''
     Description: Optional comma-separated Amazon Connect instance IDs to scan.
 
+  PrimaryConnectInstanceId:
+    Type: String
+    Default: ''
+    Description: >
+      Log group suffix for the Connect instance contact flow logs. This is appended
+      to /aws/connect/ to form the log group name. Connect may use either the instance
+      UUID or the instance alias (e.g. "archdemos") — check CloudWatch Logs to confirm
+      which your instance uses. The normalizer always uses CONNECT_INSTANCE_ID env var
+      for the actual UUID; this value is only used to target the correct log group.
+      Leave blank to skip subscription filter creation.
+
   DefaultModelProvider:
     Type: String
     Default: bedrock
@@ -76,6 +87,9 @@ Parameters:
     Default: '2048'
     AllowedValues: ['512', '1024', '2048', '3072', '4096', '5120', '6144', '7168', '8192']
 
+
+Conditions:
+  HasPrimaryConnectInstanceId: !Not [!Equals [!Ref PrimaryConnectInstanceId, '']]
 
 Resources:
   ConnectSreKmsKey:
@@ -1311,6 +1325,33 @@ Resources:
               Value: !Ref EnableConnectWriteActions
             - Name: ENABLE_AUTONOMOUS_ACTIONS
               Value: !Ref EnableAutonomousActions
+
+  # ---------------------------------------------------------------------------
+  # Contact Flow Log ingestion — subscription filter on /aws/connect/{suffix}
+  # Filters for { $.Results = "Error" } so only execution failures reach the
+  # normalizer. Conditional on PrimaryConnectInstanceId being supplied.
+  # The log group is Connect-owned and must already exist (contact flow logging
+  # must be enabled in the Connect instance settings before deploying this).
+  # ---------------------------------------------------------------------------
+
+  ContactFlowLogsSubscriptionFilter:
+    Type: AWS::Logs::SubscriptionFilter
+    Condition: HasPrimaryConnectInstanceId
+    DependsOn: ContactFlowLogsLambdaPermission
+    Properties:
+      LogGroupName: !Sub '/aws/connect/${PrimaryConnectInstanceId}'
+      FilterName: !Sub '${EnvironmentName}-connect-sre-flow-errors'
+      FilterPattern: '{ $.Results = "Error" }'
+      DestinationArn: !GetAtt NormalizerFunction.Arn
+
+  ContactFlowLogsLambdaPermission:
+    Type: AWS::Lambda::Permission
+    Condition: HasPrimaryConnectInstanceId
+    Properties:
+      FunctionName: !Ref NormalizerFunction
+      Action: lambda:InvokeFunction
+      Principal: logs.amazonaws.com
+      SourceArn: !Sub 'arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/connect/${PrimaryConnectInstanceId}:*'
 
 Outputs:
   EventBusName:

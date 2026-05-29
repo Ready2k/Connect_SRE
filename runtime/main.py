@@ -67,6 +67,7 @@ _STEPS_TTL_DAYS = 90
 s3_client = boto3.client("s3", region_name=os.environ.get("AWS_REGION", os.environ.get("AWS_DEFAULT_REGION", "us-west-2")))
 sqs_client = boto3.client("sqs", region_name=os.environ.get("AWS_REGION", os.environ.get("AWS_DEFAULT_REGION", "us-west-2")))
 lambda_client = boto3.client("lambda", region_name=os.environ.get("AWS_REGION", os.environ.get("AWS_DEFAULT_REGION", "us-west-2")))
+lex_client = boto3.client("lexv2-models", region_name=os.environ.get("AWS_REGION", os.environ.get("AWS_DEFAULT_REGION", "us-west-2")))
 TOPOLOGY_REFRESH_QUEUE_URL = os.environ.get("TOPOLOGY_REFRESH_QUEUE_URL", "")
 ACTION_DISPATCHER_LAMBDA_NAME = os.environ.get("ACTION_DISPATCHER_LAMBDA_NAME", "dev-connect-sre-action-dispatcher")
 
@@ -354,10 +355,19 @@ async def get_incidents(mode: str = Query("demo")):
         ]
     try:
         table = dynamodb.Table(INCIDENT_TABLE)
-        response = table.scan(Limit=50)
-        # Sort newest first based on createdAt (mock sorting since scan doesn't order)
-        items = response.get('Items', [])
-        items.sort(key=lambda x: x.get('createdAt', ''), reverse=True)
+        items = []
+        kwargs = {
+            "FilterExpression": "dedupeKey <> :hb",
+            "ExpressionAttributeValues": {":hb": "scheduled:proactive-heartbeat"},
+        }
+        while True:
+            response = table.scan(**kwargs)
+            items.extend(response.get("Items", []))
+            last = response.get("LastEvaluatedKey")
+            if not last:
+                break
+            kwargs["ExclusiveStartKey"] = last
+        items.sort(key=lambda x: x.get("createdAt", ""), reverse=True)
         return items
     except Exception as e:
         logger.error(f"Failed to fetch incidents: {e}")
@@ -688,7 +698,9 @@ async def get_approvals(mode: str = Query("demo"), status: str = Query("PENDING"
                 "status": "PENDING",
                 "createdAt": "2026-05-25T14:35:00Z",
                 "actionType": "Update Lex Bot Alias",
-                "resourceId": "SalesBot_V2"
+                "resourceId": "SalesBot_V2",
+                "blastRadius": {"impactedCount": 3},
+                "justification": "The SalesBot_V2 Lex bot alias is pointing to an unpublished draft version causing ResourceNotFoundException on every GetUserInput invocation. The Flow Health Specialist confirmed that the Billing_Main and Sales_Routing flows both reference this alias directly. The Lex Bot Specialist verified that version 5 is stable and fully published with en_US locale support. This remediation will update the bot alias PROD_ALIAS to point to version 5. Risk Assessment confirmed this is low risk: only 3 downstream flows are affected and a rollback can be performed in under 60 seconds by reverting the alias. Upon approval, a test call should be placed through Billing_Main to confirm the UnknownError is resolved."
             }
         ]
     try:
@@ -1185,23 +1197,84 @@ async def get_monitoring_metrics(
                  if m.get("Metric", {}).get("Name") == "OLDEST_CONTACT_AGE"),
                 default=0
             )
-            # Still pull incidents from DynamoDB for SEV counts
+            # Still pull incidents from DynamoDB for SEV counts (exclude noisy heartbeats)
             inc_table = dynamodb.Table(INCIDENT_TABLE)
-            inc_items = inc_table.scan(Limit=100).get("Items", [])
+            inc_items = []
+            _kwargs = {
+                "FilterExpression": "dedupeKey <> :hb",
+                "ExpressionAttributeValues": {":hb": "scheduled:proactive-heartbeat"},
+            }
+            while True:
+                _resp = inc_table.scan(**_kwargs)
+                inc_items.extend(_resp.get("Items", []))
+                _last = _resp.get("LastEvaluatedKey")
+                if not _last:
+                    break
+                _kwargs["ExclusiveStartKey"] = _last
             open_sev1 = sum(1 for i in inc_items if is_active_incident(i) and i.get("severity", "").upper() == "SEV1")
             open_sev2 = sum(1 for i in inc_items if is_active_incident(i) and i.get("severity", "").upper() == "SEV2")
 
             # Build a live-sourced response matching the same schema as demo
             uptime = 99.99 - (0.05 * open_sev1) - (0.01 * open_sev2)
+
+            # Build queue volumes from all known queues (not just ones with active contacts).
+            # GetCurrentMetricData omits idle queues, so we use queue_summaries as the base
+            # and look up any live contact count from the metrics results.
+            metrics_by_queue_id = {}
+            for r in queue_data:
+                qid = r.get("Dimensions", {}).get("Queue", {}).get("Id", "")
+                if qid:
+                    metrics_by_queue_id[qid] = r.get("Collections", [])
             queue_vols = [
                 {
-                    "name": queue_name_map.get(r.get("Dimensions", {}).get("Queue", {}).get("Id", ""), f"Queue {i+1}"),
-                    "volume": int(next((m.get("Value", 0) for m in r.get("Collections", []) if m.get("Metric", {}).get("Name") == "CONTACTS_IN_QUEUE"), 0))
+                    "name": q.get("Name", f"Queue {i+1}"),
+                    "volume": int(next(
+                        (m.get("Value", 0) for m in metrics_by_queue_id.get(q["Id"], [])
+                         if m.get("Metric", {}).get("Name") == "CONTACTS_IN_QUEUE"),
+                        0
+                    ))
                 }
-                for i, r in enumerate(queue_data[:8])
+                for i, q in enumerate(queue_summaries[:8])
             ]
             if not queue_vols:
                 queue_vols = [{"name": "No queues", "volume": 0}]
+
+            # Fetch Lex bots: use Connect list_bots (instance-level) as the primary source
+            # so bots appear even if no flow explicitly references them by ARN.
+            lex_status_color = {"Available": "var(--status-ok)", "Failed": "var(--status-critical)"}
+            live_lex_bots = []
+            try:
+                bots_resp = connect_client.list_bots(InstanceId=instanceId, LexVersion="V2", MaxResults=25)
+                # API returns "LexBots" (CLI/SDK) or "LexBotConfigSummaryList" (older docs);
+                # items may or may not have a "LexBotConfig" wrapper — handle both.
+                bot_list = bots_resp.get("LexBots") or bots_resp.get("LexBotConfigSummaryList", [])
+                for b in bot_list:
+                    inner = b.get("LexBotConfig", b)
+                    alias_arn = inner.get("LexV2Bot", {}).get("AliasArn", "")
+                    if not alias_arn:
+                        continue
+                    bot_name = alias_arn  # fallback label
+                    bot_status = "Unknown"
+                    try:
+                        parts = alias_arn.split("bot-alias/")
+                        if len(parts) == 2:
+                            ids = parts[1].split("/")
+                            if len(ids) == 2:
+                                bot_id, alias_id = ids[0], ids[1]
+                                detail = lex_client.describe_bot_alias(botId=bot_id, botAliasId=alias_id)
+                                bot_name = detail.get("botAliasName", alias_id)
+                                bot_status = detail.get("botAliasStatus", "Unknown")
+                    except Exception as lex_detail_err:
+                        logger.warning(f"Could not describe Lex alias {alias_arn}: {lex_detail_err}")
+                    live_lex_bots.append({
+                        "name": bot_name,
+                        "status": bot_status,
+                        "score": 100 if bot_status == "Available" else 0,
+                        "color": lex_status_color.get(bot_status, "var(--status-warn)")
+                    })
+            except Exception as lex_err:
+                logger.warning(f"Could not list Lex bots for instance {instanceId}: {lex_err}")
+
             activity_feed = sorted(inc_items, key=lambda x: x.get("createdAt", ""), reverse=True)[:3]
             activity_feed = [{"id": i.get("incidentId", "?"), "severity": i.get("severity", "SEV4"), "title": i.get("title", ""), "createdAt": i.get("createdAt", "")} for i in activity_feed]
             return {
@@ -1217,7 +1290,7 @@ async def get_monitoring_metrics(
                 "queueHealthMetrics": [{"time": "now", "aht": 0, "wait": int(oldest_wait)}],
                 "concurrentCalls": int(total_contacts),
                 "abandonRate": "—",
-                "lexBots": [],
+                "lexBots": live_lex_bots,
                 "activityFeed": activity_feed
             }
         except Exception as e:

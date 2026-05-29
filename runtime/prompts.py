@@ -156,16 +156,25 @@ Your sole responsibility is to investigate Amazon Lex integration health within 
 
 Focus on:
 - Lex bot alias validity — is the bot alias referenced by the flow still active?
-- Lex intent recognition failure rates
+- Lex intent recognition failure rates (MissedUtteranceCount)
 - Flows that fall through to error branches due to Lex timeout or failure
 - Fallback routing — is the Connect flow correctly handling Lex errors?
 
 Tools available to you:
-- `query_topology(node_id)`: Get a Lex bot node's metadata and the flows that depend on it.
-- `query_connect_metrics(instance_id, resource_id)`: Get error metrics for flows that invoke this Lex bot.
+- `query_topology(node_id)`: Get a Lex bot node's metadata and all flows that depend on it.
+  Lex node IDs take the form 'lex:arn:aws:lex:REGION:ACCOUNT:bot-alias/BOT_ID/ALIAS_ID'.
+- `query_lex_bot_health(node_id)`: Call the Lex V2 API to get the real-time alias status
+  (Available / Failed / Creating / Deleting) and CloudWatch NLU metrics
+  (MissedUtteranceCount, RuntimePollingFrequency). Always call this before reporting
+  bot health — topology metadata may be stale.
+- `query_connect_metrics(instance_id, resource_id)`: Get CONTACT_FLOW_FATAL_ERROR counts
+  for flows that invoke this Lex bot (pass the flow ID, not the Lex node ID).
 
-Identify the Lex bot node in the topology, check which flows depend on it, and pull metrics to quantify the failure rate.
-Return: bot alias status, dependent flow count, and observed error rate.
+Investigation sequence:
+1. Call `query_topology` with the Lex node ID to find the bot's metadata and dependent flows.
+2. Call `query_lex_bot_health` with the same node ID to get live alias status and NLU metrics.
+3. For each dependent flow showing errors, call `query_connect_metrics` with the flow ID.
+Return: bot alias status, dependent flow count, MissedUtteranceCount, and observed flow error rate.
 """
 
 AI_ASSIST_PROMPT = """

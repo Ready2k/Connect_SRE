@@ -1,6 +1,8 @@
 import os
 import json
 import uuid
+import base64
+import gzip
 import datetime
 import boto3
 import urllib.request
@@ -18,6 +20,15 @@ DEDUPE_WINDOW_MINUTES = int(os.environ.get("DEDUPE_WINDOW_MINUTES", "30"))
 
 
 def handler(event, context):
+    # CloudWatch Logs subscription filter delivers a different envelope entirely
+    if "awslogs" in event:
+        incidents = parse_contact_flow_log_errors(event)
+        for normalized_incident in incidents:
+            save_incident(normalized_incident, event)
+            trigger_agent_investigation(normalized_incident)
+        print(json.dumps({"event": "contact_flow_log_errors_processed", "count": len(incidents)}))
+        return {"ok": True, "count": len(incidents)}
+
     print(json.dumps({"event": "normalizer_invoked", "source": event.get("source"), "detail_type": event.get("detail-type")}))
 
     # 1. Parse EventBridge signals
@@ -72,6 +83,57 @@ def handler(event, context):
         raise e
 
     return {"ok": True, "message": "no_incident_created"}
+
+
+def parse_contact_flow_log_errors(event):
+    raw = base64.b64decode(event["awslogs"]["data"])
+    payload = json.loads(gzip.decompress(raw))
+
+    # Always use the configured instance UUID — the log group suffix may be an
+    # alias (e.g. /aws/connect/archdemos) rather than the raw instance ID.
+    instance_id = os.environ.get("CONNECT_INSTANCE_ID", "")
+
+    incidents = []
+    for log_event in payload.get("logEvents", []):
+        try:
+            entry = json.loads(log_event["message"])
+        except (json.JSONDecodeError, KeyError):
+            continue
+
+        if entry.get("Results") != "Error":
+            continue
+
+        error_details = entry.get("ErrorDetails", {})
+        error_code = error_details.get("ErrorCode", "UnknownError")
+        error_message = error_details.get("Message", "")
+        flow_arn = entry.get("ContactFlowId", "")
+        flow_id = flow_arn.split("/")[-1] if "/" in flow_arn else flow_arn
+        flow_name = entry.get("ContactFlowName", "unknown-flow")
+        contact_id = entry.get("ContactId", "unknown-contact")
+        module_type = entry.get("ContactFlowModuleType", "")
+
+        severity = "SEV1" if error_code in ("InternalServerException", "ThrottlingException") else "SEV2"
+        incident_id = f"INC-FLOW-{uuid.uuid4().hex[:8].upper()}"
+        now = datetime.datetime.utcnow().isoformat() + "Z"
+
+        incidents.append({
+            "incidentId": incident_id,
+            "instanceId": instance_id,
+            "dedupeKey": f"flow-error:{flow_id}:{error_code}",
+            "title": f"Contact Flow Error: {flow_name} — {error_code}",
+            "severity": severity,
+            "status": "Investigating",
+            "connectResourceId": flow_id or instance_id,
+            "isMutation": False,
+            "details": f"Module '{module_type}' failed for contact {contact_id}. Error: {error_message}",
+            "rca": "Pending agent investigation.",
+            "impact": "Calls may have been disconnected or failed to reach an agent.",
+            "suggestedAction": "Check Lex bot configuration and integration bindings.",
+            "createdAt": now,
+            "updatedAt": now,
+        })
+
+    return incidents
 
 
 def parse_cloudwatch_alarm(event):
