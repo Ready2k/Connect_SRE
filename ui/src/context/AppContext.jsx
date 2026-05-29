@@ -14,6 +14,10 @@ export const AppProvider = ({ children }) => {
         if (cfg.appMode === 'demo') {
           setMode('demo');
           setModeLocked(true);
+        } else if (cfg.appMode === 'live') {
+          setMode('live');
+        } else if (cfg.appMode === 'both') {
+          setMode('live'); // server has real credentials — start in live
         }
       })
       .catch(() => {}); // silently ignore — defaults remain
