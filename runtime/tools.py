@@ -10,6 +10,34 @@ from datetime import datetime, timezone, timedelta
 logger = logging.getLogger(__name__)
 
 _REGION = os.environ.get("AWS_REGION", os.environ.get("AWS_DEFAULT_REGION", "us-west-2"))
+
+
+def _compress_tool_output(payload: str) -> str:
+    """Compress a tool output string before handing it to the agent.
+
+    Falls back to the original payload on any error so a headroom issue never
+    breaks a tool call.  Logs the compression ratio when compression fires.
+    """
+    try:
+        from headroom import compress as _hr_compress
+        model_id = os.environ.get("BEDROCK_MODEL_ID", "us.anthropic.claude-sonnet-4-6")
+        compressed = _hr_compress(payload, model=model_id)
+        if len(compressed) >= len(payload):
+            return payload
+        try:
+            json.loads(payload)
+            try:
+                json.loads(compressed)
+            except Exception:
+                return payload
+        except Exception:
+            pass
+        ratio = 1.0 - len(compressed) / max(len(payload), 1)
+        logger.info("[headroom] compressed %d → %d chars (%.0f%% reduction)", len(payload), len(compressed), ratio * 100)
+        return compressed
+    except Exception as exc:
+        logger.debug("[headroom] compression skipped: %s", exc)
+        return payload
 DYNAMODB = boto3.resource("dynamodb", region_name=_REGION)
 S3 = boto3.client("s3", region_name=_REGION)
 
@@ -53,15 +81,11 @@ def query_topology(node_id: str) -> str:
         return json.dumps({"status": "error", "message": str(e)})
 
 
-def calculate_blast_radius(start_node_id: str, max_depth: int = 3, direction: str = "upstream") -> str:
-    """
-    Traverses the DynamoDB topology graph to calculate the blast radius of a component failure.
-    Returns a consolidated impact tree avoiding multiple LLM round-trips.
+def _blast_radius_raw(start_node_id: str, max_depth: int = 3, direction: str = "upstream") -> str:
+    """Run the BFS traversal and return the raw JSON string (no compression).
 
-    Args:
-        start_node_id (str): The node ID that failed or is changing (e.g. 'lex:bot:1234').
-        max_depth (int): Maximum depth of traversal (default 3).
-        direction (str): 'upstream' finds what depends on this node (impact). 'downstream' finds what this node depends on (dependencies).
+    Used internally by propose_remediation so it can json.loads() the result
+    without needing to undo compression.
     """
     t0 = time.time()
     logger.info("[TOOL] calculate_blast_radius node=%s depth=%d dir=%s", start_node_id, max_depth, direction)
@@ -92,11 +116,15 @@ def calculate_blast_radius(start_node_id: str, max_depth: int = 3, direction: st
                 if edge_target not in visited:
                     queue.append((edge_target, depth + 1))
 
+        count_resp = table.scan(Select="COUNT")
+        total_count = count_resp.get("Count", 0)
+
         result = json.dumps({
             "status": "success",
             "start_node": start_node_id,
             "direction": direction,
             "impacted_count": len(impacted_nodes),
+            "total_node_count": total_count,
             "impact_tree": impacted_nodes
         })
         logger.info("[TOOL] calculate_blast_radius node=%s impacted=%d latency_ms=%d", start_node_id, len(impacted_nodes), int((time.time()-t0)*1000))
@@ -104,6 +132,19 @@ def calculate_blast_radius(start_node_id: str, max_depth: int = 3, direction: st
     except Exception as e:
         logger.error("[TOOL] calculate_blast_radius node=%s error=%s", start_node_id, e)
         return json.dumps({"status": "error", "message": str(e)})
+
+
+def calculate_blast_radius(start_node_id: str, max_depth: int = 3, direction: str = "upstream") -> str:
+    """
+    Traverses the DynamoDB topology graph to calculate the blast radius of a component failure.
+    Returns a consolidated impact tree avoiding multiple LLM round-trips.
+
+    Args:
+        start_node_id (str): The node ID that failed or is changing (e.g. 'lex:bot:1234').
+        max_depth (int): Maximum depth of traversal (default 3).
+        direction (str): 'upstream' finds what depends on this node (impact). 'downstream' finds what this node depends on (dependencies).
+    """
+    return _compress_tool_output(_blast_radius_raw(start_node_id, max_depth, direction))
 
 
 def query_recent_mutations(resource_id: str) -> str:
@@ -212,19 +253,24 @@ def propose_remediation(action_type: str, params: str, incident_id: str, justifi
         target_node = params_dict.get("targetNodeId")
         if target_node:
             try:
-                impact = json.loads(calculate_blast_radius(target_node, max_depth=3, direction="upstream"))
-                blast_radius_data = {
-                    "impactedCount": impact.get("impacted_count", 0),
-                    "impactedNodes": impact.get("impacted_nodes", [])[:50],
-                }
+                impact = json.loads(_blast_radius_raw(target_node, max_depth=3, direction="upstream"))
+                if impact.get("status") == "error":
+                    logger.warning("[propose_remediation] blast radius lookup failed: %s", impact.get("message"))
+                else:
+                    blast_radius_data = {
+                        "impactedCount": impact.get("impacted_count", 0),
+                        "totalNodeCount": impact.get("total_node_count", 0),
+                        "impactedNodes": impact.get("impact_tree", [])[:50],
+                    }
             except Exception:
                 pass
 
         blast_policy = next((p for p in policies if p.get("policyName", "") == "Max Blast Radius: 20%" and p.get("enabled", False)), None)
         if blast_policy and not blocked_reason and blast_radius_data:
             impacted = blast_radius_data["impactedCount"]
-            if impacted / 100.0 > 0.20:
-                blocked_reason = f"Blocked by Policy: Max Blast Radius exceeded. Impacted: {impacted} nodes (>20%)"
+            total = blast_radius_data.get("totalNodeCount", 0)
+            if total > 0 and impacted / total > 0.20:
+                blocked_reason = f"Blocked by Policy: Max Blast Radius exceeded. Impacted: {impacted}/{total} nodes ({impacted/total:.0%})"
 
         lambda_requires_approval = False
         lambda_policy = next((p for p in policies if p.get("policyName", "") == "Require Approval for Lambda Updates" and p.get("enabled", False)), None)
@@ -652,7 +698,13 @@ def query_cloudwatch_flow_logs(instance_id: str, flow_id: str, start_minutes_ago
         for _ in range(10):
             res = logs_client.get_query_results(queryId=query_id)
             if res["status"] == "Complete":
-                return json.dumps({"status": "success", "logs": res.get("results", [])}, default=str)
+                return _compress_tool_output(json.dumps({"status": "success", "logs": res.get("results", [])}, default=str))
+            if res["status"] in ("Failed", "Cancelled"):
+                return json.dumps({
+                    "status": "error",
+                    "message": f"CloudWatch Logs Insights query {res['status'].lower()}.",
+                    "queryId": query_id
+                })
             time.sleep(1)
         return json.dumps({"status": "timeout", "message": "CloudWatch Logs Insights query timed out."})
     except Exception as e:

@@ -4,3 +4,4 @@ boto3>=1.37.0
 pydantic==2.7.2
 google-antigravity
 strands-agents
+headroom>=0.2.7
