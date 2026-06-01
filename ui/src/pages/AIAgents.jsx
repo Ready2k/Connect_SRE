@@ -32,9 +32,10 @@ function Stat({ label, value, color }) {
 function AgentCard({ agent, health, expanded, onToggle }) {
   const statusStyle = STATUS_STYLE[agent.status] || STATUS_STYLE.UNKNOWN;
   const visStyle = VISIBILITY_STYLE[agent.visibilityStatus] || {};
-  const errorRate = health?.bedrockMetrics?.errorRatePct ?? null;
-  const invocations = health?.bedrockMetrics?.Invocations ?? null;
-  const latency = health?.bedrockMetrics?.InvocationLatency ?? null;
+  const agentBedrock = agent.modelId ? (health?.bedrockMetrics?.[agent.modelId] ?? null) : null;
+  const errorRate = agentBedrock?.errorRatePct ?? null;
+  const invocations = agentBedrock?.Invocations ?? null;
+  const latency = agentBedrock?.InvocationLatency ?? null;
   const lexErrors = health?.lexMetrics?.RuntimeUserErrors ?? null;
 
   const modelShort = agent.modelId
@@ -127,13 +128,13 @@ function AgentCard({ agent, health, expanded, onToggle }) {
           </div>
 
           {/* Bedrock metrics */}
-          {health?.bedrockMetrics && (
+          {agentBedrock && (
             <div>
               <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '0.5rem' }}>Bedrock (60 min)</div>
               <div style={{ display: 'flex', flexDirection: 'column', gap: '0.3rem' }}>
-                <MetricRow icon={<Zap size={12} />} label="Invocations" value={health.bedrockMetrics.Invocations ?? '—'} />
-                <MetricRow icon={<AlertTriangle size={12} />} label="Client errors" value={health.bedrockMetrics.InvocationClientErrors ?? '—'} color={healthColor(health.bedrockMetrics.errorRatePct)} />
-                <MetricRow icon={<Clock size={12} />} label="Avg latency" value={health.bedrockMetrics.InvocationLatency ? `${health.bedrockMetrics.InvocationLatency} ms` : '—'} />
+                <MetricRow icon={<Zap size={12} />} label="Invocations" value={agentBedrock.Invocations ?? '—'} />
+                <MetricRow icon={<AlertTriangle size={12} />} label="Client errors" value={agentBedrock.InvocationClientErrors ?? '—'} color={healthColor(agentBedrock.errorRatePct)} />
+                <MetricRow icon={<Clock size={12} />} label="Avg latency" value={agentBedrock.InvocationLatency ? `${agentBedrock.InvocationLatency} ms` : '—'} />
               </div>
             </div>
           )}
@@ -197,19 +198,19 @@ export default function AIAgents() {
       const params = new URLSearchParams({ mode });
       if (activeInstance) params.set('instanceId', activeInstance);
 
-      const [agentsRes, healthRes] = await Promise.all([
-        fetch(`/api/connect/ai-agents?${params}`),
-        fetch(`/api/connect/ai-agents/health?${params}`),
-      ]);
-
+      const agentsRes = await fetch(`/api/connect/ai-agents?${params}`);
       if (!agentsRes.ok) throw new Error(`agents: ${agentsRes.status}`);
-      if (!healthRes.ok) throw new Error(`health: ${healthRes.status}`);
-
       const agentsData = await agentsRes.json();
-      const healthData = await healthRes.json();
+      const fetchedAgents = agentsData.agents || [];
+      setAgents(fetchedAgents);
 
-      setAgents(agentsData.agents || []);
-      setHealth(healthData);
+      // Pass discovered model IDs so the health endpoint doesn't need its own Q Connect calls
+      const uniqueModelIds = [...new Set(fetchedAgents.map(a => a.modelId).filter(Boolean))];
+      if (uniqueModelIds.length > 0) params.set('modelIds', uniqueModelIds.join(','));
+
+      const healthRes = await fetch(`/api/connect/ai-agents/health?${params}`);
+      if (!healthRes.ok) throw new Error(`health: ${healthRes.status}`);
+      setHealth(await healthRes.json());
     } catch (e) {
       setError(e.message);
     } finally {
@@ -224,7 +225,10 @@ export default function AIAgents() {
 
   const activeCount = agents.filter(a => a.status === 'ACTIVE').length;
   const publishedCount = agents.filter(a => a.visibilityStatus === 'PUBLISHED').length;
-  const errorRate = health?.bedrockMetrics?.errorRatePct ?? null;
+  const allBedrockValues = health?.bedrockMetrics ? Object.values(health.bedrockMetrics) : [];
+  const errorRate = allBedrockValues.length > 0
+    ? Math.max(...allBedrockValues.map(m => m.errorRatePct ?? 0))
+    : null;
 
   return (
     <div style={{ padding: '1.5rem', maxWidth: '1100px' }}>

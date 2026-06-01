@@ -1333,8 +1333,8 @@ async def list_connect_ai_agents(mode: str = Query("demo"), assistantId: Optiona
                     p = pr.get("aiPrompt", {})
                     model_id = p.get("modelId")
                     prompt_status = p.get("status")
-                except Exception:
-                    pass
+                except Exception as prompt_err:
+                    logger.warning(f"Could not resolve prompt {prompt_id_bare} for agent {ag.get('name')}: {prompt_err}")
 
             agents.append({
                 "aiAgentId": ag.get("aiAgentId"),
@@ -1357,20 +1357,30 @@ async def list_connect_ai_agents(mode: str = Query("demo"), assistantId: Optiona
 
 
 @app.get("/api/connect/ai-agents/health")
-async def get_ai_agents_health(mode: str = Query("demo"), assistantId: Optional[str] = Query(None)):
+async def get_ai_agents_health(
+    mode: str = Query("demo"),
+    assistantId: Optional[str] = Query(None),
+    modelIds: Optional[str] = Query(None),
+):
     """
     Return CloudWatch health metrics (Bedrock + Lex) for the Q Connect AI agent fleet.
-    Bedrock metrics are per model ID; Lex metrics cover the shared Connect bot.
+    bedrockMetrics is a dict keyed by model ID so each agent card can look up its own metrics.
+    Lex metrics cover the shared Connect bot.
     Both are fetched for the past 60 minutes.
+
+    modelIds: optional comma-separated Bedrock model IDs. When omitted, the endpoint
+    discovers them from qconnect.list_ai_agents + get_ai_prompt.
     """
     if mode != "live":
+        haiku = "us.anthropic.claude-haiku-4-5-20251001-v1:0"
         return {
             "bedrockMetrics": {
-                "modelId": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
-                "Invocations": 142,
-                "InvocationClientErrors": 3,
-                "InvocationLatency": 820.5,
-                "errorRatePct": 2.1,
+                haiku: {
+                    "Invocations": 142,
+                    "InvocationClientErrors": 3,
+                    "InvocationLatency": 820.5,
+                    "errorRatePct": 2.1,
+                }
             },
             "lexMetrics": {
                 "RuntimeRequestCount": 98,
@@ -1380,7 +1390,6 @@ async def get_ai_agents_health(mode: str = Query("demo"), assistantId: Optional[
         }
 
     region = os.environ.get("AWS_REGION", "us-west-2")
-    model_id = "us.anthropic.claude-haiku-4-5-20251001-v1:0"
     cw = boto3.client("cloudwatch", region_name=region)
 
     import datetime
@@ -1388,21 +1397,51 @@ async def get_ai_agents_health(mode: str = Query("demo"), assistantId: Optional[
     start = now - datetime.timedelta(minutes=60)
     period = 3600
 
-    bedrock: dict = {"modelId": model_id}
-    dims = [{"Name": "ModelId", "Value": model_id}]
-    for metric, stat in [("Invocations", "Sum"), ("InvocationClientErrors", "Sum"), ("InvocationLatency", "Average")]:
+    # Resolve which model IDs to query
+    if modelIds:
+        unique_model_ids = list({m.strip() for m in modelIds.split(",") if m.strip()})
+    else:
+        _aid = assistantId or _QCONNECT_ASSISTANT_ID
+        unique_model_ids = []
         try:
-            resp = cw.get_metric_statistics(
-                Namespace="AWS/Bedrock", MetricName=metric, Dimensions=dims,
-                StartTime=start, EndTime=now, Period=period, Statistics=[stat],
-            )
-            dps = resp.get("Datapoints", [])
-            bedrock[metric] = round(dps[0][stat], 2) if dps else 0
-        except Exception:
-            bedrock[metric] = 0
-    inv = bedrock.get("Invocations", 0)
-    err = bedrock.get("InvocationClientErrors", 0)
-    bedrock["errorRatePct"] = round(100 * err / inv, 1) if inv else 0
+            qc = boto3.client("qconnect", region_name=region)
+            resp = qc.list_ai_agents(assistantId=_aid)
+            discovered: set = set()
+            for ag in resp.get("aiAgentSummaries", []):
+                cfg = ag.get("configuration", {}).get("orchestrationAIAgentConfiguration", {})
+                prompt_id_versioned = cfg.get("orchestrationAIPromptId", "")
+                prompt_id_bare = prompt_id_versioned.split(":")[0] if prompt_id_versioned else ""
+                if prompt_id_bare:
+                    try:
+                        pr = qc.get_ai_prompt(assistantId=_aid, aiPromptId=prompt_id_bare)
+                        mid = pr.get("aiPrompt", {}).get("modelId")
+                        if mid:
+                            discovered.add(mid)
+                    except Exception:
+                        pass
+            unique_model_ids = list(discovered)
+        except Exception as e:
+            logger.warning(f"health: could not discover model IDs from Q Connect: {e}")
+
+    # Query Bedrock metrics per model ID
+    bedrock_metrics: dict = {}
+    for model_id in unique_model_ids:
+        dims = [{"Name": "ModelId", "Value": model_id}]
+        m: dict = {}
+        for metric, stat in [("Invocations", "Sum"), ("InvocationClientErrors", "Sum"), ("InvocationLatency", "Average")]:
+            try:
+                resp = cw.get_metric_statistics(
+                    Namespace="AWS/Bedrock", MetricName=metric, Dimensions=dims,
+                    StartTime=start, EndTime=now, Period=period, Statistics=[stat],
+                )
+                dps = resp.get("Datapoints", [])
+                m[metric] = round(dps[0][stat], 2) if dps else 0
+            except Exception:
+                m[metric] = 0
+        inv = m.get("Invocations", 0)
+        err = m.get("InvocationClientErrors", 0)
+        m["errorRatePct"] = round(100 * err / inv, 1) if inv else 0
+        bedrock_metrics[model_id] = m
 
     lex: dict = {}
     try:
@@ -1426,7 +1465,7 @@ async def get_ai_agents_health(mode: str = Query("demo"), assistantId: Optional[
     except Exception as e:
         lex["error"] = str(e)
 
-    return {"bedrockMetrics": bedrock, "lexMetrics": lex, "source": "live"}
+    return {"bedrockMetrics": bedrock_metrics, "lexMetrics": lex, "source": "live"}
 
 
 @app.post("/api/topology/scan")

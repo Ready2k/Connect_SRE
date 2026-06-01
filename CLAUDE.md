@@ -210,15 +210,39 @@ Gemini: `gemini-3.5-flash` (GA, recommended), `gemini-2.5-pro`, `gemini-2.5-flas
 
 ### IAM user `connect-sre-agent-runtime` (manually managed, outside CloudFormation)
 
-This IAM user provides credentials to the ECS container via `~/.aws`. Required permissions:
-- `bedrock:InvokeModel` + `bedrock:InvokeModelWithResponseStream` — **Resource: `"*"`** (cross-region inference routes through us-east-1, not just us-west-2)
-- `connect:GetCurrentMetricData` — real-time queue/flow metrics
-- `connect:GetMetricDataV2` — historical metrics used by `query_connect_metrics` tool
-- `wisdom:ListAIAgents`, `wisdom:GetAIAgent`, `wisdom:ListAIPrompts`, `wisdom:GetAIPrompt`, `wisdom:ListAssistants` — Q Connect AI Agent management (boto3 service name is `qconnect`; IAM actions use the `wisdom:` prefix)
-- All DynamoDB table actions on the `dev-connect-sre-*` tables
-- CloudWatch Logs Insights (`logs:StartQuery`, `logs:GetQueryResults`, `logs:DescribeLogGroups`, `logs:DescribeLogStreams`)
+Attached policy: `sre_connect_AWS_access` (customer-managed, currently at v19).  
+Credentials are mounted into the ECS container via `~/.aws` at runtime.
 
-When adding Connect API calls to `tools.py`, check `GetMetricDataV2` vs `GetCurrentMetricData` — they are **separate IAM actions** requiring separate grants.
+**Bedrock**
+- `bedrock:InvokeModel`, `bedrock:InvokeModelWithResponseStream` — Resource `"*"` required; cross-region inference profiles route through us-east-1 so a region-scoped ARN will silently fail.
+
+**DynamoDB** — all standard CRUD actions (`GetItem`, `PutItem`, `UpdateItem`, `DeleteItem`, `Query`, `Scan`, `BatchGetItem`, `BatchWriteItem`) on every `dev-connect-sre-*` table and its GSIs:
+`topology`, `journey-map`, `incidents`, `approvals`, `agent-runs`, `policy-config`, `tool-registry`, `model-config`, `incident-digests`, `memory`, `agent-steps`
+
+**S3** — `ListBucket`/`GetBucketLocation` + `GetObject`/`PutObject`/`DeleteObject` on the four dev buckets: `runbooks`, `evidence`, `agent-traces`, `topology`.
+
+**Connect read** — all `List*` and `Describe*` actions for instances, flows, flow modules, queues, routing profiles, users, hierarchy groups, hours of operation, phone numbers, quick connects, security profiles, prompts, bots, and Lambda functions. These feed the topology scanner and agent tools.
+- `connect:GetCurrentMetricData` — real-time queue/agent metrics (`/api/monitoring/metrics?mode=live`)
+- `connect:GetMetricDataV2` — historical metrics used by the `query_connect_metrics` tool. **Separate IAM action from `GetCurrentMetricData` — both must be granted explicitly.**
+
+**Q Connect (wisdom namespace)** — boto3 client is `qconnect`; IAM actions use `wisdom:` prefix:
+- `wisdom:ListAIAgents` — list all agents for the assistant (`/api/connect/ai-agents`)
+- `wisdom:GetAIAgent` — fetch full agent config including prompt ID (`/api/connect/ai-agents`)
+- `wisdom:ListAIPrompts` — enumerate prompts for the assistant
+- `wisdom:GetAIPrompt` — resolve the model ID and status from a prompt ID; absence of this permission causes model to show as "Unknown" in the UI and health metrics to be unqueryable
+- `wisdom:ListAssistants`, `wisdom:GetAssistant` — discover/validate the Q Connect assistant
+
+**Lex** — `ListBots`, `ListBotAliases`, `DescribeBot`, `DescribeBotAlias` — topology scanner maps Lex bots as nodes in the Connect dependency graph.
+
+**Lambda** — `GetFunction`, `GetFunctionConfiguration`, `ListAliases`, `ListVersionsByFunction` — topology scanner maps Lambda functions attached to contact flows.
+
+**CloudWatch**
+- `cloudwatch:GetMetricStatistics`, `cloudwatch:GetMetricData`, `cloudwatch:ListMetrics`, `cloudwatch:DescribeAlarms` — Bedrock invocation metrics, Lex runtime metrics, and alarm state used by the health and monitoring endpoints
+- `logs:DescribeLogGroups`, `logs:DescribeLogStreams`, `logs:FilterLogEvents`, `logs:GetLogEvents`, `logs:StartQuery`, `logs:StopQuery`, `logs:GetQueryResults` — CloudWatch Logs Insights queries against Connect flow logs
+
+**KMS** — `Encrypt`, `Decrypt`, `ReEncrypt*`, `GenerateDataKey*`, `DescribeKey` — S3 bucket encryption.
+
+**SQS / SSM / Step Functions** — `sqs:SendMessage/ReceiveMessage/DeleteMessage/GetQueueAttributes` (topology refresh queue), `ssm:StartAutomationExecution/GetAutomationExecution`, `states:StartExecution/DescribeExecution` (remediation workflows).
 
 ### boto3 version constraint
 
