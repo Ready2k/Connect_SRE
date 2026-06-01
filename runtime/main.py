@@ -1701,7 +1701,7 @@ async def get_monitoring_metrics(
                 "queueVolumes": queue_vols,
                 "queueHealthMetrics": [{"time": "now", "aht": 0, "wait": int(oldest_wait)}],
                 "concurrentCalls": int(total_contacts),
-                "abandonRate": "—",
+                "abandonRate": None,
                 "lexBots": live_lex_bots,
                 "activityFeed": activity_feed
             }
@@ -1759,35 +1759,45 @@ async def get_monitoring_metrics(
         elif open_sev2 > 0:
             uptime -= 0.01 * open_sev2
         
-        # Incident time-series
-        time_series = [
-            { "time": "00hrs", "sev1": 0, "sev2": 2, "sev3": 5, "sev4": 10 },
-            { "time": "04hrs", "sev1": 1, "sev2": 3, "sev3": 8, "sev4": 12 },
-            { "time": "08hrs", "sev1": 0, "sev2": 4, "sev3": 6, "sev4": 15 },
-            { "time": "12hrs", "sev1": 2, "sev2": 5, "sev3": 9, "sev4": 14 },
-            { "time": "16hrs", "sev1": 1, "sev2": 6, "sev3": 7, "sev4": 11 },
-            { "time": "20hrs", "sev1": open_sev1, "sev2": open_sev2, "sev3": open_sev3, "sev4": open_sev4 }
-        ]
-        
-        # Dynamic Queue volumes
-        queue_vols = [
-            { "name": "Sales", "volume": int(450 + random.randint(-30, 30)) },  # nosec B311
-            { "name": "Support", "volume": int(380 + random.randint(-25, 25)) },  # nosec B311
-            { "name": "Escalations", "volume": int(220 + random.randint(-15, 15) + (open_sev1 * 50)) },  # nosec B311
-            { "name": "Retention", "volume": int(310 + random.randint(-20, 20)) }  # nosec B311
-        ]
-        
-        # Concurrent calls
-        concurrent = int(1120 + random.randint(-50, 50))  # nosec B311
-        wait_time = int(12 + random.randint(-3, 3) + (open_sev1 * 120) + (open_sev2 * 30))  # nosec B311
-        abandon_rate = f"{1.8 + random.uniform(-0.2, 0.2) + (open_sev1 * 8.5) + (open_sev2 * 2.1):.1f}%"  # nosec B311
-        
-        # Lex Bot Health scores
-        lex_bots = [
-            { "name": "CustomerSupport_v2", "status": "Healthy" if open_sev1 == 0 else "Degraded", "score": int(98 - open_sev1 * 10), "color": "var(--status-ok)" if open_sev1 == 0 else "var(--status-warn)" },
-            { "name": "BillingInquiry", "status": "Healthy", "score": int(96 + random.randint(-2, 2)), "color": "var(--status-ok)" },  # nosec B311
-            { "name": "Appointment", "status": "Healthy", "score": int(95 + random.randint(-3, 3)), "color": "var(--status-ok)" }  # nosec B311
-        ]
+        if mode == "live":
+            # Live mode: only real current incident counts, no fake historical data
+            time_series = [
+                { "time": "now", "sev1": open_sev1, "sev2": open_sev2, "sev3": open_sev3, "sev4": open_sev4 }
+            ]
+        else:
+            # Demo mode: full fake historical curve for visual effect
+            time_series = [
+                { "time": "00hrs", "sev1": 0, "sev2": 2, "sev3": 5, "sev4": 10 },
+                { "time": "04hrs", "sev1": 1, "sev2": 3, "sev3": 8, "sev4": 12 },
+                { "time": "08hrs", "sev1": 0, "sev2": 4, "sev3": 6, "sev4": 15 },
+                { "time": "12hrs", "sev1": 2, "sev2": 5, "sev3": 9, "sev4": 14 },
+                { "time": "16hrs", "sev1": 1, "sev2": 6, "sev3": 7, "sev4": 11 },
+                { "time": "20hrs", "sev1": open_sev1, "sev2": open_sev2, "sev3": open_sev3, "sev4": open_sev4 }
+            ]
+
+        if mode == "live":
+            # No instance selected — return real incident counts but no fake Connect metrics
+            queue_vols = []
+            concurrent = None
+            wait_time = 0
+            abandon_rate = None
+            lex_bots = []
+        else:
+            # Demo mode — generate plausible-looking numbers for demo purposes
+            queue_vols = [
+                { "name": "Sales", "volume": int(450 + random.randint(-30, 30)) },  # nosec B311
+                { "name": "Support", "volume": int(380 + random.randint(-25, 25)) },  # nosec B311
+                { "name": "Escalations", "volume": int(220 + random.randint(-15, 15) + (open_sev1 * 50)) },  # nosec B311
+                { "name": "Retention", "volume": int(310 + random.randint(-20, 20)) }  # nosec B311
+            ]
+            concurrent = int(1120 + random.randint(-50, 50))  # nosec B311
+            wait_time = int(12 + random.randint(-3, 3) + (open_sev1 * 120) + (open_sev2 * 30))  # nosec B311
+            abandon_rate = round(1.8 + random.uniform(-0.2, 0.2) + (open_sev1 * 8.5) + (open_sev2 * 2.1), 1)  # nosec B311
+            lex_bots = [
+                { "name": "CustomerSupport_v2", "status": "Healthy" if open_sev1 == 0 else "Degraded", "score": int(98 - open_sev1 * 10), "color": "var(--status-ok)" if open_sev1 == 0 else "var(--status-warn)" },
+                { "name": "BillingInquiry", "status": "Healthy", "score": int(96 + random.randint(-2, 2)), "color": "var(--status-ok)" },  # nosec B311
+                { "name": "Appointment", "status": "Healthy", "score": int(95 + random.randint(-3, 3)), "color": "var(--status-ok)" }  # nosec B311
+            ]
         
         # Activity feed items: compile real latest incidents
         activity_feed = []
@@ -1824,7 +1834,7 @@ async def get_monitoring_metrics(
             },
             "incidentsTimeSeries": time_series,
             "queueVolumes": queue_vols,
-            "queueHealthMetrics": [
+            "queueHealthMetrics": [] if mode == "live" else [
                 { "time": "00:00", "aht": 180, "wait": 12 },
                 { "time": "12:00", "aht": 220, "wait": 45 },
                 { "time": "15:00", "aht": 340, "wait": wait_time },

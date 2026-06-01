@@ -74,6 +74,12 @@ const Monitoring = () => {
         <span style={{ fontSize: '0.78rem', color: 'var(--text-secondary)' }}>Auto-refreshes every 5s</span>
       </div>
 
+      {mode === 'live' && !activeInstance && (
+        <div style={{ padding: '0.7rem 1rem', borderRadius: '8px', background: 'rgba(251,191,36,0.08)', border: '1px solid rgba(251,191,36,0.25)', fontSize: '0.82rem', color: '#fbbf24' }}>
+          Select a Connect instance from the header to view real-time queue and call metrics.
+        </div>
+      )}
+
       {/* Summary stat row */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '1rem' }}>
         {[

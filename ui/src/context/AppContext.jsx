@@ -3,17 +3,21 @@ import { createContext, useContext, useState, useCallback, useEffect } from 'rea
 const AppContext = createContext(null);
 
 export const AppProvider = ({ children }) => {
-  const [mode, setMode] = useState('demo'); // 'demo' | 'live'
+  const [mode, setMode] = useState('live'); // 'demo' | 'live' — matches backend default
   const [activeInstance, setActiveInstance] = useState(null); // null = aggregated overview
-  const [modeLocked, setModeLocked] = useState(false); // true when server started in demo-only mode
+  const [serverAppMode, setServerAppMode] = useState(null); // null until /api/config resolves
+
+  // Derived lock states
+  const modeLocked = serverAppMode === 'demo';         // option 1: demo-only, no toggle
+  const liveModeLocked = serverAppMode === 'live';     // option 2: live-only, no toggle
 
   useEffect(() => {
     fetch('/api/config')
       .then(r => r.json())
       .then(cfg => {
+        setServerAppMode(cfg.appMode);
         if (cfg.appMode === 'demo') {
           setMode('demo');
-          setModeLocked(true);
         } else if (cfg.appMode === 'live') {
           setMode('live');
         } else if (cfg.appMode === 'both') {
@@ -24,12 +28,12 @@ export const AppProvider = ({ children }) => {
   }, []);
 
   const toggleMode = useCallback((newMode) => {
-    if (modeLocked) return;
+    if (modeLocked || liveModeLocked) return;
     setMode(newMode);
     if (newMode === 'demo') {
       setActiveInstance(null);
     }
-  }, [modeLocked]);
+  }, [modeLocked, liveModeLocked]);
 
   const selectInstance = useCallback((instance) => {
     setActiveInstance(instance);
@@ -40,7 +44,7 @@ export const AppProvider = ({ children }) => {
   }, []);
 
   return (
-    <AppContext.Provider value={{ mode, activeInstance, modeLocked, toggleMode, selectInstance, clearInstance }}>
+    <AppContext.Provider value={{ mode, activeInstance, modeLocked, liveModeLocked, toggleMode, selectInstance, clearInstance }}>
       {children}
     </AppContext.Provider>
   );

@@ -4,7 +4,7 @@ import { Bell, ChevronDown, Wifi, WifiOff } from 'lucide-react';
 import { useAppContext } from '../context/AppContext';
 
 const Header = () => {
-  const { mode, activeInstance, modeLocked, toggleMode, selectInstance, clearInstance } = useAppContext();
+  const { mode, activeInstance, modeLocked, liveModeLocked, toggleMode, selectInstance, clearInstance } = useAppContext();
   const navigate = useNavigate();
   const [instances, setInstances] = useState([]);
   const [dropdownOpen, setDropdownOpen] = useState(false);
@@ -66,7 +66,7 @@ const Header = () => {
 
       <div style={{ display: 'flex', alignItems: 'center', gap: '1.5rem' }}>
 
-        {/* Demo / Live Toggle — hidden when service is locked to demo mode */}
+        {/* Demo / Live Toggle — replaced with a badge when locked to a single mode */}
         {modeLocked ? (
           <div style={{
             display: 'flex',
@@ -87,6 +87,29 @@ const Header = () => {
             }} />
             <span style={{ fontSize: '0.75rem', fontWeight: 600, letterSpacing: '0.05em', color: '#fbbf24' }}>
               DEMO MODE
+            </span>
+          </div>
+        ) : liveModeLocked ? (
+          <div style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: '0.5rem',
+            background: 'linear-gradient(135deg, rgba(34,197,94,0.15), rgba(16,185,129,0.08))',
+            borderRadius: '20px',
+            padding: '0.3rem 0.85rem',
+            border: '1px solid rgba(34,197,94,0.3)',
+          }}>
+            <span style={{
+              display: 'inline-block',
+              width: 7,
+              height: 7,
+              borderRadius: '50%',
+              background: '#22c55e',
+              boxShadow: '0 0 6px rgba(34,197,94,0.6)',
+              animation: 'pulse 1.5s infinite',
+            }} />
+            <span style={{ fontSize: '0.75rem', fontWeight: 600, letterSpacing: '0.05em', color: '#22c55e' }}>
+              LIVE MODE
             </span>
           </div>
         ) : (
