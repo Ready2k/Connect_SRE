@@ -41,3 +41,11 @@ ui/.vite/
 *.md
 stop.sh
 start.sh
+build.sh
+logs.sh
+docs/
+connect-sre-agent-artifacts/
+
+# ── Claude Code ───────────────────────────────────────────────────────────────
+.claude/
+skills-lock.json
