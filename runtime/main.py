@@ -62,6 +62,8 @@ APPROVAL_TABLE = os.environ.get("APPROVAL_TABLE_NAME", "dev-connect-sre-approval
 JOURNEYS_TABLE = os.environ.get("JOURNEYS_TABLE_NAME", "dev-connect-sre-journey-map")
 TOOLS_TABLE = os.environ.get("TOOLS_TABLE_NAME", "dev-connect-sre-tool-registry")
 POLICY_TABLE = os.environ.get("POLICY_TABLE_NAME", "dev-connect-sre-policy-config")
+MEMORY_TABLE = os.environ.get("MEMORY_TABLE_NAME", "dev-connect-sre-memory")
+_REJECTION_MEMORY_TTL_DAYS = 180
 RUNBOOKS_BUCKET = os.environ.get("RUNBOOKS_BUCKET_NAME", "dev-connect-sre-runbooks-388660028061-us-west-2")
 TRACE_TABLE_NAME = os.environ.get("AGENT_RUNS_TABLE_NAME", "dev-connect-sre-agent-runs")
 AGENT_STEPS_TABLE_NAME = os.environ.get("AGENT_STEPS_TABLE_NAME", "dev-connect-sre-agent-steps")
@@ -573,7 +575,25 @@ async def get_incident_steps(incident_id: str, mode: str = Query("demo")):
     # Return live steps if available
     if incident_id in _step_store and _step_store[incident_id]:
         return _step_store[incident_id]
-    # Fall back: convert historical DynamoDB trace to a single step
+    # Fall back: read persisted steps from the agent-steps table (all specialist activity is here)
+    try:
+        steps_table = dynamodb.Table(AGENT_STEPS_TABLE_NAME)
+        resp = steps_table.query(
+            KeyConditionExpression=boto3.dynamodb.conditions.Key("incidentId").eq(incident_id),
+        )
+        items = resp.get("Items", [])
+        # Handle pagination
+        while resp.get("LastEvaluatedKey"):
+            resp = steps_table.query(
+                KeyConditionExpression=boto3.dynamodb.conditions.Key("incidentId").eq(incident_id),
+                ExclusiveStartKey=resp["LastEvaluatedKey"],
+            )
+            items.extend(resp.get("Items", []))
+        if items:
+            return sorted(items, key=lambda x: int(x.get("seq", 0)))
+    except Exception as e:
+        logger.warning("Failed to fetch persisted steps for %s: %s", incident_id, e)
+    # Last resort: synthesize two steps from the trace summary record
     try:
         table = dynamodb.Table(TRACE_TABLE_NAME)
         resp = table.scan(FilterExpression=boto3.dynamodb.conditions.Attr('incidentId').eq(incident_id))
@@ -590,7 +610,7 @@ async def get_incident_steps(incident_id: str, mode: str = Query("demo")):
                  "detail": trace.get("thoughtProcess", "")},
             ]
     except Exception as e:
-        logger.error(f"Failed to fetch historical steps: {e}")
+        logger.error(f"Failed to fetch trace summary for {incident_id}: {e}")
     return []
 
 
@@ -805,6 +825,34 @@ async def action_approval(approval_id: str, request: Request, payload: dict, mod
             }
         )
         logger.info("Approval %s set to %s by operator=%s", approval_id, status, operator_id)
+
+        if status == "REJECTED" and justification:
+            try:
+                item = table.get_item(Key={'approvalId': approval_id}).get('Item', {})
+                params = item.get("parameters", {})
+                resource_id = params.get("targetNodeId") or item.get("incidentId", approval_id)
+                action_type = item.get("actionType", "unknown_action")
+                incident_id = item.get("incidentId", "")
+                memory_id = f"mem-{uuid.uuid4().hex[:12]}"
+                now_iso = datetime.utcnow().isoformat() + "Z"
+                ttl = int((datetime.utcnow() + timedelta(days=_REJECTION_MEMORY_TTL_DAYS)).timestamp())
+                dynamodb.Table(MEMORY_TABLE).put_item(Item={
+                    "memoryId": memory_id,
+                    "resourceId": resource_id,
+                    "incidentType": "OPERATOR_REJECTION",
+                    "pattern": f"Proposed remediation '{action_type}' was rejected by operator.",
+                    "rootCause": justification[:1000],
+                    "resolution": "",
+                    "outcome": "rejected",
+                    "incidentId": incident_id,
+                    "approvalId": approval_id,
+                    "operatorId": operator_id,
+                    "createdAt": now_iso,
+                    "ttl": ttl,
+                })
+                logger.info("Wrote rejection memory memoryId=%s resource=%s", memory_id, resource_id)
+            except Exception as mem_err:
+                logger.warning("Failed to write rejection memory for approval %s: %s", approval_id, mem_err)
 
         if status == "APPROVED":
             item = table.get_item(Key={'approvalId': approval_id}).get('Item', {})

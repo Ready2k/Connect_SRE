@@ -130,7 +130,19 @@ const Incidents = () => {
   const [clearingAll, setClearingAll] = useState(false);
   const [steps, setSteps] = useState([]);
   const [linkedIncidents, setLinkedIncidents] = useState([]);
+  const [rejectTarget, setRejectTarget] = useState(null);
+  const [rejectReason, setRejectReason] = useState('');
   const stepsTimerRef = useRef(null);
+  const statusTabRef = useRef(statusTab);
+  useEffect(() => { statusTabRef.current = statusTab; }, [statusTab]);
+
+  // Clear detail pane when switching to Active tab while a non-active incident is selected
+  useEffect(() => {
+    if (selected && statusTab === 'active' && !ACTIVE_STATUSES.has(selected.status)) {
+      setSelected(null);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [statusTab]);
 
   const incidents = filterByTab(allIncidents, statusTab);
 
@@ -198,6 +210,15 @@ const Incidents = () => {
               i.incidentId === selected.incidentId ? { ...i, status: newStatus } : i
             ));
             clearInterval(stepsTimerRef.current);
+            // Resolved leaves the Active tab — clear the detail pane after a brief pause
+            if (last.type === 'complete') {
+              const resolvedId = selected.incidentId;
+              setTimeout(() => {
+                if (statusTabRef.current === 'active') {
+                  setSelected(prev => prev?.incidentId === resolvedId ? null : prev);
+                }
+              }, 2500);
+            }
           }
         })
         .catch(() => {});
@@ -210,16 +231,31 @@ const Incidents = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selected?.incidentId, mode]);
 
-  const handleAction = (approvalId, status) => {
+  const submitAction = (approvalId, status, justification) => {
     fetch(`/api/approvals/${approvalId}/action?mode=${mode}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ status, justification: "Actioned via Incident Page" })
+      body: JSON.stringify({ status, justification })
     }).then(() => {
-      setApprovals(prev => prev.map(app => 
+      setApprovals(prev => prev.map(app =>
         app.approvalId === approvalId ? { ...app, status } : app
       ));
     });
+  };
+
+  const handleApprove = (approvalId) => submitAction(approvalId, 'APPROVED', 'Approved via Incident Page');
+
+  const handleRejectClick = (approvalId) => {
+    setRejectTarget({ approvalId });
+    setRejectReason('');
+  };
+
+  const submitReject = () => {
+    if (!rejectTarget) return;
+    const justification = rejectReason.trim() || 'Rejected via Incident Page';
+    submitAction(rejectTarget.approvalId, 'REJECTED', justification);
+    setRejectTarget(null);
+    setRejectReason('');
   };
 
   const handleTriggerAgent = (incidentId) => {
@@ -514,14 +550,39 @@ const Incidents = () => {
                       </div>
                       
                       {app.status === 'PENDING' && (
-                        <div style={{ display: 'flex', gap: '0.5rem', justifyContent: 'flex-end' }}>
-                          <button onClick={() => handleAction(app.approvalId, 'APPROVED')} style={{ background: 'transparent', border: '1px solid var(--status-ok)', color: 'var(--status-ok)', padding: '0.25rem 0.75rem', borderRadius: '4px', cursor: 'pointer', fontWeight: 600 }}>
-                            Approve
-                          </button>
-                          <button onClick={() => handleAction(app.approvalId, 'REJECTED')} style={{ background: 'transparent', border: '1px solid var(--status-critical)', color: 'var(--status-critical)', padding: '0.25rem 0.75rem', borderRadius: '4px', cursor: 'pointer', fontWeight: 600 }}>
-                            Reject
-                          </button>
-                        </div>
+                        rejectTarget?.approvalId === app.approvalId ? (
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem' }}>
+                            <textarea
+                              autoFocus
+                              value={rejectReason}
+                              onChange={e => setRejectReason(e.target.value)}
+                              placeholder="Reason for rejection (required for agent learning)..."
+                              rows={3}
+                              style={{
+                                background: 'var(--bg-glass)', border: '1px solid var(--status-critical)',
+                                borderRadius: '4px', color: 'var(--text-primary)', padding: '0.4rem',
+                                fontSize: '0.82rem', resize: 'vertical', outline: 'none', width: '100%',
+                              }}
+                            />
+                            <div style={{ display: 'flex', gap: '0.5rem', justifyContent: 'flex-end' }}>
+                              <button onClick={() => setRejectTarget(null)} style={{ background: 'transparent', border: '1px solid var(--border-glass)', color: 'var(--text-secondary)', padding: '0.25rem 0.6rem', borderRadius: '4px', cursor: 'pointer', fontSize: '0.82rem' }}>
+                                Cancel
+                              </button>
+                              <button onClick={submitReject} style={{ background: 'var(--status-critical)', border: 'none', color: 'white', padding: '0.25rem 0.75rem', borderRadius: '4px', cursor: 'pointer', fontWeight: 600, fontSize: '0.83rem' }}>
+                                Confirm Reject
+                              </button>
+                            </div>
+                          </div>
+                        ) : (
+                          <div style={{ display: 'flex', gap: '0.5rem', justifyContent: 'flex-end' }}>
+                            <button onClick={() => handleApprove(app.approvalId)} style={{ background: 'transparent', border: '1px solid var(--status-ok)', color: 'var(--status-ok)', padding: '0.25rem 0.75rem', borderRadius: '4px', cursor: 'pointer', fontWeight: 600 }}>
+                              Approve
+                            </button>
+                            <button onClick={() => handleRejectClick(app.approvalId)} style={{ background: 'transparent', border: '1px solid var(--status-critical)', color: 'var(--status-critical)', padding: '0.25rem 0.75rem', borderRadius: '4px', cursor: 'pointer', fontWeight: 600 }}>
+                              Reject
+                            </button>
+                          </div>
+                        )
                       )}
                     </div>
                   ))}

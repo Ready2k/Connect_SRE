@@ -12,6 +12,8 @@ const PendingApprovals = () => {
   const [editingName, setEditingName] = useState(false);
   const [draftName, setDraftName] = useState('');
   const nameInputRef = useRef(null);
+  const [rejectTarget, setRejectTarget] = useState(null); // { approvalId }
+  const [rejectReason, setRejectReason] = useState('');
 
   useEffect(() => {
     fetch(`/api/approvals?mode=${mode}`)
@@ -33,15 +35,34 @@ const PendingApprovals = () => {
     setEditingName(false);
   };
 
-  const handleAction = (approvalId, status) => {
+  const submitAction = (approvalId, status, justification) => {
     const operator = operatorName.trim() || 'unknown';
     fetch(`/api/approvals/${approvalId}/action?mode=${mode}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ status, operatorId: operator, justification: `${status} by ${operator} via UI` })
+      body: JSON.stringify({ status, operatorId: operator, justification })
     }).then(() => {
       setApprovals(prev => prev.filter(app => app.approvalId !== approvalId));
     });
+  };
+
+  const handleApprove = (approvalId) => {
+    const operator = operatorName.trim() || 'unknown';
+    submitAction(approvalId, 'APPROVED', `Approved by ${operator} via UI`);
+  };
+
+  const handleRejectClick = (approvalId) => {
+    setRejectTarget({ approvalId });
+    setRejectReason('');
+  };
+
+  const submitReject = () => {
+    if (!rejectTarget) return;
+    const operator = operatorName.trim() || 'unknown';
+    const justification = rejectReason.trim() || `Rejected by ${operator} via UI`;
+    submitAction(rejectTarget.approvalId, 'REJECTED', justification);
+    setRejectTarget(null);
+    setRejectReason('');
   };
 
   const pending = approvals.filter(a => a.status === 'PENDING');
@@ -134,14 +155,39 @@ const PendingApprovals = () => {
               </div>
 
               {/* Actions */}
-              <div style={{ display: 'flex', gap: '0.5rem', justifyContent: 'flex-end' }}>
-                <button onClick={() => handleAction(app.approvalId, 'APPROVED')} style={{ background: 'transparent', border: '1px solid var(--status-ok)', color: 'var(--status-ok)', padding: '0.3rem 1rem', borderRadius: '4px', cursor: 'pointer', fontWeight: 600, fontSize: '0.85rem' }}>
-                  Approve
-                </button>
-                <button onClick={() => handleAction(app.approvalId, 'REJECTED')} style={{ background: 'transparent', border: '1px solid var(--status-critical)', color: 'var(--status-critical)', padding: '0.3rem 1rem', borderRadius: '4px', cursor: 'pointer', fontWeight: 600, fontSize: '0.85rem' }}>
-                  Reject
-                </button>
-              </div>
+              {rejectTarget?.approvalId === app.approvalId ? (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+                  <textarea
+                    autoFocus
+                    value={rejectReason}
+                    onChange={e => setRejectReason(e.target.value)}
+                    placeholder="Reason for rejection (required for agent learning)..."
+                    rows={3}
+                    style={{
+                      background: 'var(--bg-glass)', border: '1px solid var(--status-critical)',
+                      borderRadius: '4px', color: 'var(--text-primary)', padding: '0.5rem',
+                      fontSize: '0.83rem', resize: 'vertical', outline: 'none', width: '100%',
+                    }}
+                  />
+                  <div style={{ display: 'flex', gap: '0.5rem', justifyContent: 'flex-end' }}>
+                    <button onClick={() => setRejectTarget(null)} style={{ background: 'transparent', border: '1px solid var(--border-glass)', color: 'var(--text-secondary)', padding: '0.3rem 0.75rem', borderRadius: '4px', cursor: 'pointer', fontSize: '0.83rem' }}>
+                      Cancel
+                    </button>
+                    <button onClick={submitReject} style={{ background: 'var(--status-critical)', border: 'none', color: 'white', padding: '0.3rem 1rem', borderRadius: '4px', cursor: 'pointer', fontWeight: 600, fontSize: '0.85rem' }}>
+                      Confirm Reject
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <div style={{ display: 'flex', gap: '0.5rem', justifyContent: 'flex-end' }}>
+                  <button onClick={() => handleApprove(app.approvalId)} style={{ background: 'transparent', border: '1px solid var(--status-ok)', color: 'var(--status-ok)', padding: '0.3rem 1rem', borderRadius: '4px', cursor: 'pointer', fontWeight: 600, fontSize: '0.85rem' }}>
+                    Approve
+                  </button>
+                  <button onClick={() => handleRejectClick(app.approvalId)} style={{ background: 'transparent', border: '1px solid var(--status-critical)', color: 'var(--status-critical)', padding: '0.3rem 1rem', borderRadius: '4px', cursor: 'pointer', fontWeight: 600, fontSize: '0.85rem' }}>
+                    Reject
+                  </button>
+                </div>
+              )}
 
             </div>
           );

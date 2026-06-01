@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "skills": {
+    "amazon-connect": {
+      "source": "jiteshgaikwad/claude-skills",
+      "sourceType": "github",
+      "skillPath": "skills/amazon-connect/SKILL.md",
+      "computedHash": "346e043ddf7893c5e6fb868c2237467f854c9a5f89a304741ba7ecdd45627e3e"
+    }
+  }
+}

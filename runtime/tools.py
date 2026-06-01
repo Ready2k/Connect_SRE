@@ -720,11 +720,16 @@ def recall_prior_incidents(resource_id: str, incident_type: str = "") -> str:
     """
     Recall past incidents for a specific Connect resource to surface known patterns,
     prior root causes, and what remediation actions previously succeeded or failed.
+    Also surfaces operator rejection feedback (incidentType='OPERATOR_REJECTION') — when
+    an operator rejects a proposed remediation they provide a reason, which is stored here
+    as rootCause. Always check for OPERATOR_REJECTION records before proposing a remediation
+    to avoid repeating actions that were previously rejected and to understand why.
     Call this BEFORE beginning a new investigation so you don't repeat prior work.
 
     Args:
         resource_id (str): The Connect resource ID to look up (e.g. flow ID, queue ID, Lex bot ID).
         incident_type (str): Optional filter — e.g. 'flow_fatal_error', 'queue_overflow', 'lex_failure'.
+                             Use 'OPERATOR_REJECTION' to retrieve only past operator rejections.
     """
     logger.info("[TOOL] recall_prior_incidents resource_id=%s type=%s", resource_id, incident_type)
     try:
