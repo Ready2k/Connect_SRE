@@ -719,41 +719,8 @@ async def get_topology(
             logger.warning(f"Live topology fetch failed, falling back to demo: {e}")
             # Fall through to demo mode below
 
-    # --- DEMO MODE: DynamoDB scan (original behaviour) ---
-    try:
-        table = dynamodb.Table(TOPOLOGY_TABLE)
-        response = table.scan()
-        items = response.get('Items', [])
-        
-        nodes = []
-        edges = []
-        
-        for item in items:
-            if item.get('edgeTypeTarget') == 'METADATA':
-                col = len(nodes) % 5
-                row = len(nodes) // 5
-                nodes.append({
-                    "id": item['nodeId'],
-                    "type": "default",
-                    "data": {
-                        "label": item.get('label', item['nodeId']),
-                        "nodeType": item.get('nodeType', ''),
-                        "region": item.get('region', item.get('awsRegion', '')),
-                    },
-                    "position": {"x": 50 + col * 200, "y": 80 + row * 150}
-                })
-            else:
-                edges.append({
-                    "id": f"e-{item['nodeId']}-{item['edgeTypeTarget']}",
-                    "source": item['nodeId'],
-                    "target": item.get('targetNodeId', item['edgeTypeTarget']),
-                    "animated": True
-                })
-        
-        return {"nodes": nodes, "edges": edges, "source": "demo"}
-    except Exception as e:
-        logger.error(f"Failed to fetch topology: {e}")
-        return {"nodes": [], "edges": [], "source": "error"}
+    # --- DEMO MODE: hardcoded topology (no AWS calls) ---
+    return {"nodes": _DEMO_TOPOLOGY_NODES, "edges": _DEMO_TOPOLOGY_EDGES, "source": "demo"}
 
 @app.get("/api/approvals")
 async def get_approvals(mode: str = Query("demo"), status: str = Query("PENDING")):
@@ -1294,59 +1261,215 @@ async def get_agents_status(mode: str = Query("demo")):
     }
 
 _QCONNECT_ASSISTANT_ID = os.environ.get("QCONNECT_ASSISTANT_ID", "de018ffb-f5ea-4ff4-8547-714cb0eeb736")
+_STRANDS_MODEL = "us.anthropic.claude-sonnet-4-6"
 _DEMO_AI_AGENTS = [
     {
-        "aiAgentId": "8e6ff0ea-63f5-42e7-b0a6-e602eda61de8",
-        "name": "CustomerIntentRouter",
+        "aiAgentId": "a1b2c3d4-0001-4000-8000-sre000000001",
+        "name": "Connect SRE Supervisor",
         "type": "ORCHESTRATION",
         "status": "ACTIVE",
         "visibilityStatus": "PUBLISHED",
         "locale": "en_US",
-        "modelId": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+        "modelId": _STRANDS_MODEL,
         "promptStatus": "ACTIVE",
-        "tools": ["Complete", "Escalate", "Retrieve"],
-        "modifiedTime": "2026-05-28T18:08:16+00:00",
-        "tags": {"project": "connect-demo", "environment": "dev"},
+        "tools": [
+            "flow_health_specialist", "module_dependency_specialist", "queue_routing_specialist",
+            "lex_bot_specialist", "ai_assist_specialist", "change_correlation_specialist",
+            "customer_impact_specialist", "runbook_specialist", "risk_policy_specialist",
+            "verification_specialist", "recall_prior_incidents", "propose_remediation",
+            "query_topology", "query_recent_mutations", "record_investigation_memory",
+        ],
+        "modifiedTime": "2026-05-30T09:00:00+00:00",
+        "tags": {"framework": "strands", "role": "supervisor"},
     },
     {
-        "aiAgentId": "47478eeb-2cd8-4462-b1e4-60ecfbf68217",
-        "name": "LostCard",
-        "type": "ORCHESTRATION",
+        "aiAgentId": "a1b2c3d4-0002-4000-8000-sre000000002",
+        "name": "Flow Health Specialist",
+        "type": "SPECIALIST",
         "status": "ACTIVE",
         "visibilityStatus": "PUBLISHED",
         "locale": "en_US",
-        "modelId": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+        "modelId": _STRANDS_MODEL,
         "promptStatus": "ACTIVE",
-        "tools": [],
-        "modifiedTime": "2026-05-28T22:47:38+00:00",
-        "tags": {"project": "connect-demo", "environment": "dev"},
+        "tools": ["query_topology", "query_connect_metrics", "query_cloudwatch_flow_logs"],
+        "modifiedTime": "2026-05-30T09:00:00+00:00",
+        "tags": {"framework": "strands", "role": "specialist", "code": "FLOW"},
     },
     {
-        "aiAgentId": "64655399-7bde-4f27-8fba-1a9c93a73a93",
-        "name": "New Test Agent",
-        "type": "ORCHESTRATION",
-        "status": "ACTIVE",
-        "visibilityStatus": "PUBLISHED",
-        "locale": "en_GB",
-        "modelId": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
-        "promptStatus": "ACTIVE",
-        "tools": [],
-        "modifiedTime": "2026-05-29T10:32:41+00:00",
-        "tags": {"project": "connect-demo", "environment": "dev"},
-    },
-    {
-        "aiAgentId": "958bd176-e23b-42b2-bf09-53506f88df7a",
-        "name": "Whats_The_Weather",
-        "type": "ORCHESTRATION",
+        "aiAgentId": "a1b2c3d4-0003-4000-8000-sre000000003",
+        "name": "Module Dependency Specialist",
+        "type": "SPECIALIST",
         "status": "ACTIVE",
         "visibilityStatus": "PUBLISHED",
         "locale": "en_US",
-        "modelId": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+        "modelId": _STRANDS_MODEL,
         "promptStatus": "ACTIVE",
-        "tools": ["NewTool_1"],
-        "modifiedTime": "2026-05-29T18:11:55+00:00",
-        "tags": {"project": "connect-demo", "environment": "dev"},
+        "tools": ["query_topology", "calculate_blast_radius"],
+        "modifiedTime": "2026-05-30T09:00:00+00:00",
+        "tags": {"framework": "strands", "role": "specialist", "code": "MODULE"},
     },
+    {
+        "aiAgentId": "a1b2c3d4-0004-4000-8000-sre000000004",
+        "name": "Queue & Routing Specialist",
+        "type": "SPECIALIST",
+        "status": "ACTIVE",
+        "visibilityStatus": "PUBLISHED",
+        "locale": "en_US",
+        "modelId": _STRANDS_MODEL,
+        "promptStatus": "ACTIVE",
+        "tools": ["query_topology", "query_connect_metrics", "query_connect_ctrs", "query_contact_lens", "query_agent_events"],
+        "modifiedTime": "2026-05-30T09:00:00+00:00",
+        "tags": {"framework": "strands", "role": "specialist", "code": "QUEUE"},
+    },
+    {
+        "aiAgentId": "a1b2c3d4-0005-4000-8000-sre000000005",
+        "name": "Lex Bot Specialist",
+        "type": "SPECIALIST",
+        "status": "ACTIVE",
+        "visibilityStatus": "PUBLISHED",
+        "locale": "en_US",
+        "modelId": _STRANDS_MODEL,
+        "promptStatus": "ACTIVE",
+        "tools": ["query_topology", "query_lex_bot_health", "query_connect_metrics"],
+        "modifiedTime": "2026-05-30T09:00:00+00:00",
+        "tags": {"framework": "strands", "role": "specialist", "code": "LEXA"},
+    },
+    {
+        "aiAgentId": "a1b2c3d4-0006-4000-8000-sre000000006",
+        "name": "AI Assist Specialist",
+        "type": "SPECIALIST",
+        "status": "ACTIVE",
+        "visibilityStatus": "PUBLISHED",
+        "locale": "en_US",
+        "modelId": _STRANDS_MODEL,
+        "promptStatus": "ACTIVE",
+        "tools": ["query_topology", "query_ai_agent_health"],
+        "modifiedTime": "2026-05-30T09:00:00+00:00",
+        "tags": {"framework": "strands", "role": "specialist", "code": "AIA"},
+    },
+    {
+        "aiAgentId": "a1b2c3d4-0007-4000-8000-sre000000007",
+        "name": "Change Correlation Specialist",
+        "type": "SPECIALIST",
+        "status": "ACTIVE",
+        "visibilityStatus": "PUBLISHED",
+        "locale": "en_US",
+        "modelId": _STRANDS_MODEL,
+        "promptStatus": "ACTIVE",
+        "tools": ["query_recent_mutations"],
+        "modifiedTime": "2026-05-30T09:00:00+00:00",
+        "tags": {"framework": "strands", "role": "specialist", "code": "CHANGE"},
+    },
+    {
+        "aiAgentId": "a1b2c3d4-0008-4000-8000-sre000000008",
+        "name": "Customer Impact Specialist",
+        "type": "SPECIALIST",
+        "status": "ACTIVE",
+        "visibilityStatus": "PUBLISHED",
+        "locale": "en_US",
+        "modelId": _STRANDS_MODEL,
+        "promptStatus": "ACTIVE",
+        "tools": ["calculate_blast_radius", "query_topology", "query_contact_lens", "query_agent_events"],
+        "modifiedTime": "2026-05-30T09:00:00+00:00",
+        "tags": {"framework": "strands", "role": "specialist", "code": "IMPACT"},
+    },
+    {
+        "aiAgentId": "a1b2c3d4-0009-4000-8000-sre000000009",
+        "name": "Runbook Specialist",
+        "type": "SPECIALIST",
+        "status": "ACTIVE",
+        "visibilityStatus": "PUBLISHED",
+        "locale": "en_US",
+        "modelId": _STRANDS_MODEL,
+        "promptStatus": "ACTIVE",
+        "tools": ["fetch_runbook"],
+        "modifiedTime": "2026-05-30T09:00:00+00:00",
+        "tags": {"framework": "strands", "role": "specialist", "code": "RUNBOOK"},
+    },
+    {
+        "aiAgentId": "a1b2c3d4-0010-4000-8000-sre000000010",
+        "name": "Risk & Policy Specialist",
+        "type": "SPECIALIST",
+        "status": "ACTIVE",
+        "visibilityStatus": "PUBLISHED",
+        "locale": "en_US",
+        "modelId": _STRANDS_MODEL,
+        "promptStatus": "ACTIVE",
+        "tools": ["calculate_blast_radius", "query_topology"],
+        "modifiedTime": "2026-05-30T09:00:00+00:00",
+        "tags": {"framework": "strands", "role": "specialist", "code": "RISK"},
+    },
+    {
+        "aiAgentId": "a1b2c3d4-0011-4000-8000-sre000000011",
+        "name": "Verification Specialist",
+        "type": "SPECIALIST",
+        "status": "ACTIVE",
+        "visibilityStatus": "PUBLISHED",
+        "locale": "en_US",
+        "modelId": _STRANDS_MODEL,
+        "promptStatus": "ACTIVE",
+        "tools": ["query_connect_metrics", "query_cloudwatch_flow_logs"],
+        "modifiedTime": "2026-05-30T09:00:00+00:00",
+        "tags": {"framework": "strands", "role": "specialist", "code": "VERIFY"},
+    },
+    {
+        "aiAgentId": "a1b2c3d4-0012-4000-8000-sre000000012",
+        "name": "Incident Memory Agent",
+        "type": "SPECIALIST",
+        "status": "ACTIVE",
+        "visibilityStatus": "PUBLISHED",
+        "locale": "en_US",
+        "modelId": _STRANDS_MODEL,
+        "promptStatus": "ACTIVE",
+        "tools": ["recall_prior_incidents", "record_investigation_memory"],
+        "modifiedTime": "2026-05-30T09:00:00+00:00",
+        "tags": {"framework": "strands", "role": "specialist", "code": "MEMORY"},
+    },
+]
+
+
+_DEMO_TOPOLOGY_NODES = [
+    {"id": "instance:connect-prod-1", "type": "default", "data": {"label": "Connect-Prod-Instance-1", "nodeType": "instance"}, "position": {"x": 450, "y": 30}},
+    {"id": "phone:+18005550199",      "type": "default", "data": {"label": "+1-800-555-0199 (Auth Line)",    "nodeType": "phone"},    "position": {"x": 50,  "y": 180}},
+    {"id": "phone:+18005550122",      "type": "default", "data": {"label": "+1-800-555-0122 (Billing Line)", "nodeType": "phone"},    "position": {"x": 250, "y": 180}},
+    {"id": "phone:+18005550188",      "type": "default", "data": {"label": "+1-800-555-0188 (Sales Line)",   "nodeType": "phone"},    "position": {"x": 450, "y": 180}},
+    {"id": "phone:+18005550177",      "type": "default", "data": {"label": "+1-800-555-0177 (Support Line)", "nodeType": "phone"},    "position": {"x": 650, "y": 180}},
+    {"id": "flow:auth-inbound",       "type": "default", "data": {"label": "Auth Inbound Flow",              "nodeType": "flow"},     "position": {"x": 50,  "y": 330}},
+    {"id": "flow:billing-main",       "type": "default", "data": {"label": "Billing Main Flow",              "nodeType": "flow"},     "position": {"x": 250, "y": 330}},
+    {"id": "flow:sales-routing",      "type": "default", "data": {"label": "Sales Routing Flow",             "nodeType": "flow"},     "position": {"x": 450, "y": 330}},
+    {"id": "flow:support-main",       "type": "default", "data": {"label": "Support Main Flow",              "nodeType": "flow"},     "position": {"x": 650, "y": 330}},
+    {"id": "module:customer-verify",  "type": "default", "data": {"label": "Customer Verification Module",   "nodeType": "module"},   "position": {"x": 150, "y": 480}},
+    {"id": "module:data-dip",         "type": "default", "data": {"label": "CRM Data Dip Module",            "nodeType": "module"},   "position": {"x": 550, "y": 480}},
+    {"id": "lex:identity-verify-bot", "type": "default", "data": {"label": "IdentityVerificationBot",        "nodeType": "lex"},      "position": {"x": 50,  "y": 630}},
+    {"id": "lex:sales-intent-bot",    "type": "default", "data": {"label": "SalesIntentBot",                 "nodeType": "lex"},      "position": {"x": 450, "y": 630}},
+    {"id": "lambda:check-balance",    "type": "default", "data": {"label": "CheckCustomerBalance",           "nodeType": "lambda"},   "position": {"x": 250, "y": 630}},
+    {"id": "lambda:crm-lookup",       "type": "default", "data": {"label": "CRMLookupFunction",              "nodeType": "lambda"},   "position": {"x": 650, "y": 630}},
+    {"id": "queue:auth-escalations",  "type": "default", "data": {"label": "Auth Escalations Queue",         "nodeType": "queue"},    "position": {"x": 50,  "y": 780}},
+    {"id": "queue:billing-agents",    "type": "default", "data": {"label": "Billing Agents Queue",           "nodeType": "queue"},    "position": {"x": 250, "y": 780}},
+    {"id": "queue:sales-team",        "type": "default", "data": {"label": "Sales Team Queue",               "nodeType": "queue"},    "position": {"x": 450, "y": 780}},
+    {"id": "queue:support-tier1",     "type": "default", "data": {"label": "Support Tier 1 Queue",           "nodeType": "queue"},    "position": {"x": 650, "y": 780}},
+]
+_DEMO_TOPOLOGY_EDGES = [
+    {"id": "e-inst-auth",       "source": "instance:connect-prod-1",  "target": "flow:auth-inbound",       "animated": True},
+    {"id": "e-inst-billing",    "source": "instance:connect-prod-1",  "target": "flow:billing-main",       "animated": True},
+    {"id": "e-inst-sales",      "source": "instance:connect-prod-1",  "target": "flow:sales-routing",      "animated": True},
+    {"id": "e-inst-support",    "source": "instance:connect-prod-1",  "target": "flow:support-main",       "animated": True},
+    {"id": "e-ph1-auth",        "source": "phone:+18005550199",        "target": "flow:auth-inbound",       "animated": False},
+    {"id": "e-ph2-billing",     "source": "phone:+18005550122",        "target": "flow:billing-main",       "animated": False},
+    {"id": "e-ph3-sales",       "source": "phone:+18005550188",        "target": "flow:sales-routing",      "animated": False},
+    {"id": "e-ph4-support",     "source": "phone:+18005550177",        "target": "flow:support-main",       "animated": False},
+    {"id": "e-auth-module",     "source": "flow:auth-inbound",         "target": "module:customer-verify",  "animated": True},
+    {"id": "e-billing-module",  "source": "flow:billing-main",         "target": "module:customer-verify",  "animated": True},
+    {"id": "e-sales-module",    "source": "flow:sales-routing",        "target": "module:data-dip",         "animated": True},
+    {"id": "e-support-module",  "source": "flow:support-main",         "target": "module:data-dip",         "animated": True},
+    {"id": "e-module-lex",      "source": "module:customer-verify",    "target": "lex:identity-verify-bot", "animated": True},
+    {"id": "e-module-lambda",   "source": "module:customer-verify",    "target": "lambda:check-balance",    "animated": True},
+    {"id": "e-sales-lex",       "source": "module:data-dip",           "target": "lex:sales-intent-bot",    "animated": True},
+    {"id": "e-sales-lambda",    "source": "module:data-dip",           "target": "lambda:crm-lookup",       "animated": True},
+    {"id": "e-auth-queue",      "source": "flow:auth-inbound",         "target": "queue:auth-escalations",  "animated": True},
+    {"id": "e-billing-queue",   "source": "flow:billing-main",         "target": "queue:billing-agents",    "animated": True},
+    {"id": "e-sales-queue",     "source": "flow:sales-routing",        "target": "queue:sales-team",        "animated": True},
+    {"id": "e-support-queue",   "source": "flow:support-main",         "target": "queue:support-tier1",     "animated": True},
 ]
 
 
@@ -1420,14 +1543,13 @@ async def get_ai_agents_health(
     discovers them from qconnect.list_ai_agents + get_ai_prompt.
     """
     if mode != "live":
-        haiku = "us.anthropic.claude-haiku-4-5-20251001-v1:0"
         return {
             "bedrockMetrics": {
-                haiku: {
-                    "Invocations": 142,
-                    "InvocationClientErrors": 3,
-                    "InvocationLatency": 820.5,
-                    "errorRatePct": 2.1,
+                _STRANDS_MODEL: {
+                    "Invocations": 847,
+                    "InvocationClientErrors": 4,
+                    "InvocationLatency": 1240.3,
+                    "errorRatePct": 0.5,
                 }
             },
             "lexMetrics": {
@@ -1711,14 +1833,18 @@ async def get_monitoring_metrics(
 
 
     try:
-        # 1. Fetch real-time values from DynamoDB
-        incident_table = dynamodb.Table(INCIDENT_TABLE)
-        incidents_response = incident_table.scan(Limit=100)
-        inc_items = incidents_response.get('Items', [])
-        
-        approval_table = dynamodb.Table(APPROVAL_TABLE)
-        approvals_response = approval_table.scan(Limit=50)
-        app_items = approvals_response.get('Items', [])
+        # 1. Fetch real-time values from DynamoDB (live mode only — demo uses no AWS calls)
+        if mode != "demo":
+            incident_table = dynamodb.Table(INCIDENT_TABLE)
+            incidents_response = incident_table.scan(Limit=100)
+            inc_items = incidents_response.get('Items', [])
+
+            approval_table = dynamodb.Table(APPROVAL_TABLE)
+            approvals_response = approval_table.scan(Limit=50)
+            app_items = approvals_response.get('Items', [])
+        else:
+            inc_items = []
+            app_items = []
         
         # 2. Count active incidents by severity
         # We classify open incidents as anything matching the active statuses list
